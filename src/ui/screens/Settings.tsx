@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useFlash } from '../../app/flash';
 import { navigate } from '../../app/router';
+import { useSync } from '../../app/sync';
 import { useWorkspace } from '../../app/workspace';
 import { checkBackupSize, countWorkspace, parseBackupText, type WorkspaceCounts, type WorkspaceData } from '../../content/backup';
 import { browserTimeZone, formatDateTime, supportedTimeZones } from '../../domain/time';
@@ -8,6 +9,7 @@ import { SESSION_SIZES, type ReadingSize, type SessionSize } from '../../domain/
 import { useOffline } from '../../offline/register';
 import { downloadContentExport, downloadFullBackup } from '../backupActions';
 import { ConfirmDialog, Notice, PageHeader, Segmented } from '../components/common';
+import { SyncSettings } from './SyncSettings';
 
 const READING_SIZES: Array<{ value: ReadingSize; label: string; hint: string }> = [
   { value: 'standard', label: 'Standard', hint: '18 px study text' },
@@ -40,6 +42,8 @@ function CountsTable({ counts, caption }: { counts: WorkspaceCounts; caption: st
 
 export function Settings() {
   const ws = useWorkspace();
+  const sync = useSync();
+  const syncHost = sync.status ? new URL(sync.status.url).host : null;
   const { show } = useFlash();
   const tz = ws.preferences.timezone;
   const zones = useMemo(() => supportedTimeZones(), []);
@@ -96,8 +100,11 @@ export function Settings() {
       await ws.repo.replaceWorkspace(restore.data);
       await ws.refresh();
       setRestore(null);
-      navigate('');
-      show(`Restored ${restore.counts.cards} cards and ${restore.counts.reviews} reviews from ${restore.name}.`);
+      navigate(syncHost ? 'settings' : '');
+      show(
+        `Restored ${restore.counts.cards} cards and ${restore.counts.reviews} reviews from ${restore.name}.` +
+          (syncHost ? ' Sync is now off for this device; reconnect it under Sync between devices.' : ''),
+      );
     } catch (err) {
       setRestoreErrors([`Restore failed and nothing was changed: ${err instanceof Error ? err.message : String(err)}`]);
       setRestore(null);
@@ -125,8 +132,9 @@ export function Settings() {
     ready: 'Ready. Recall opens and works on this device without a connection.',
     pending: 'Getting ready…',
     unsupported: 'Not available in this browser.',
+    insecure: 'Off, because this page wasn’t opened over HTTPS. Open Recall at its https:// address to use it offline.',
     disabled: 'Off in development builds; the published site supports it.',
-    error: 'Couldn’t be set up. Offline use needs the site to be served over HTTPS.',
+    error: 'Couldn’t be set up. Reloading the page tries again.',
   }[offline.status];
 
   const storageText = {
@@ -199,10 +207,18 @@ export function Settings() {
           Your data and backups
         </h2>
         <div className="prose">
-          <p>
-            Recall keeps everything in this browser’s local storage on this device. Nothing is sent to a server, and there is no
-            account or sync. Another browser or device has its own separate collection; move data between them with a full backup.
-          </p>
+          {syncHost ? (
+            <p>
+              Recall keeps everything in this browser’s local storage on this device, and syncs it with your server at{' '}
+              <strong>{syncHost}</strong>. Nothing is sent anywhere else.
+            </p>
+          ) : (
+            <p>
+              Recall keeps everything in this browser’s local storage on this device. Nothing is sent to a server unless you turn
+              on sync below. Without sync, another browser or device has its own separate collection; move data between them with
+              a full backup.
+            </p>
+          )}
           <p>
             Clearing this site’s data, or private-browsing modes, will erase it. On iPhone and iPad, Safari can clear data for
             sites you haven’t used in a while; adding Recall to your Home Screen (Share → Add to Home Screen) avoids that and
@@ -301,6 +317,8 @@ export function Settings() {
         ) : null}
       </section>
 
+      <SyncSettings />
+
       <section className="section settings__group" aria-labelledby="ai-title">
         <h2 id="ai-title" className="section__title">
           AI feedback
@@ -316,7 +334,10 @@ export function Settings() {
         <h2 id="delete-title" className="section__title">
           Delete all data
         </h2>
-        <p>Permanently remove every card, review, session, reflection, and preference stored in this browser.</p>
+        <p>
+          Permanently remove every card, review, session, reflection, and preference stored in this browser.
+          {syncHost ? ' This device also stops syncing. The copy on your sync server isn’t deleted.' : ''}
+        </p>
         <button type="button" className="button button--danger" onClick={() => setDeleteOpen(true)}>
           Delete all data…
         </button>
@@ -340,6 +361,12 @@ export function Settings() {
                 : ''}{' '}
               is valid. Restoring replaces everything currently in this browser.
             </p>
+            {syncHost ? (
+              <p>
+                This device syncs with <strong>{syncHost}</strong>. Restoring turns sync off here. To put the restored data on
+                your server as well, reconnect afterward and choose <em>Replace the server’s copy with this device’s</em>.
+              </p>
+            ) : null}
             <div className="counts-compare">
               <CountsTable counts={current} caption="Now in this browser" />
               <CountsTable counts={restore.counts} caption="In the backup" />
@@ -372,6 +399,7 @@ export function Settings() {
         <p>
           This removes {current.cards} cards, {current.reviews} reviews, and {current.reflections} reflections from this browser.
           It can’t be undone. Consider downloading a full backup first.
+          {syncHost ? ` This device will stop syncing; the copy on ${syncHost} stays.` : ''}
         </p>
         <div className="field">
           <label htmlFor="delete-confirm" className="field__label">

@@ -11,11 +11,20 @@
 // learner chooses to reload (the app shows a prompt), so a study session is
 // never swapped out from under them. Card data lives in IndexedDB and is
 // never touched here.
+//
+// The worker answers only navigations and requests for this build's own
+// files. Everything else, including the sync server's API under `api/` and
+// any other origin, goes to the network untouched and is never cached.
 
 const VERSION = '__RECALL_VERSION__';
 const PRECACHE = __RECALL_PRECACHE__;
 const CACHE = `recall-${VERSION}`;
-const INDEX = new URL('./index.html', self.registration.scope).href;
+const SCOPE = self.registration.scope;
+const INDEX = new URL('./index.html', SCOPE).href;
+const PRECACHED = new Set(PRECACHE.map((path) => new URL(path, SCOPE).href));
+// The sync client calls `api/` next to the app; the server itself always
+// serves it from `/api/`. Both are the same when the app is at the root.
+const API_PATHS = [new URL('./api/', SCOPE).pathname, '/api/'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -46,12 +55,14 @@ self.addEventListener('fetch', (event) => {
   if (request.method !== 'GET') return;
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
+  if (API_PATHS.some((path) => url.pathname.startsWith(path))) return;
 
   if (request.mode === 'navigate') {
     // Hash routing means every page is index.html.
     event.respondWith(fromCache(INDEX).then((cached) => cached || fetch(request)));
     return;
   }
+  if (!PRECACHED.has(url.origin + url.pathname)) return;
   event.respondWith(fromCache(request).then((cached) => cached || fetch(request)));
 });
 

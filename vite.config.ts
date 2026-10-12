@@ -64,7 +64,7 @@ export default defineConfig({
   preview: { port: 4173 },
   test: {
     environment: 'node',
-    include: ['tests/unit/**/*.test.ts'],
+    include: ['tests/unit/**/*.test.ts', 'tests/server/**/*.test.ts'],
     setupFiles: ['tests/unit/setup.ts'],
   },
 });

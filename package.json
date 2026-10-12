@@ -10,12 +10,14 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:server": "vite build --config vite.server.config.ts",
+    "server": "node --disable-warning=ExperimentalWarning dist-server/recall-server.mjs",
     "preview": "vite preview",
     "typecheck": "tsc -b",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "check": "npm run typecheck && npm run format:check && npm run test && npm run build",
+    "check": "npm run typecheck && npm run format:check && npm run test && npm run build && npm run build:server",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },

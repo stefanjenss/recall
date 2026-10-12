@@ -208,7 +208,7 @@ export function CardEditor({ cardId }: { cardId: string }) {
               disabled={busy || !schedule}
               onClick={() =>
                 act(
-                  () => ws.repo.setPaused(cardId, !schedule!.paused),
+                  () => ws.repo.setPaused(cardId, !schedule!.paused, Date.now()),
                   schedule!.paused
                     ? 'Card resumed. Its due time and history are unchanged.'
                     : 'Card paused. It won’t appear in practice.',
