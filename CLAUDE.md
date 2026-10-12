@@ -35,7 +35,8 @@ spec is `docs/PRD.md`; read the relevant section before changing behavior.
 - `src/offline/sw.js` is a template; the `recallServiceWorker` plugin in `vite.config.ts` fills in the file list and
   version and writes `dist/sw.js`. It's registered only in production builds, so end-to-end tests run with it.
 - New versions wait for the learner's "Reload now"; never call `skipWaiting()` on install.
-- The worker leaves `api/` requests (the sync API, when the sync server serves the app) to the network; never cache them.
+- The worker answers only navigations and this build's own files. It never handles `api/` (the sync server's API) or
+  other origins, so API responses are never cached; `offline.spec.ts` checks this.
 - Pushes to `main` deploy to GitHub Pages (`.github/workflows/deploy.yml`).
 
 ## UI conventions

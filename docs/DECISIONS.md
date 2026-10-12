@@ -107,12 +107,22 @@ writes; and Practice refreshes the workspace only after its first card is on scr
   Install fetches with `cache: 'reload'` so a new version never stores a stale `index.html` from the HTTP cache. A new
   worker waits until the learner clicks **Reload now**. Swapping versions on its own could change the app in the middle
   of a session. Old caches are deleted on activation.
+- **`index.html` is cache-first too, not network-first.** Network-first would make every load wait on the host, and on
+  a phone whose home server is asleep or whose Tailscale link is half up that wait can last until a timeout. It would
+  also mix a new `index.html` with the old worker's cached files. A cache-first shell isn't stale for long: the browser
+  checks `sw.js` on every load, bypassing the HTTP cache, and the app checks again when it comes back to the
+  foreground after 30 minutes.
+- **Only the app's own files go through the worker.** It answers navigations (always `index.html`, since routing is by
+  hash) and files in this build's precache list. Everything else goes to the network untouched, including other
+  origins and the sync server's API (`api/` next to the app, or `/api/` at the root). Opening `/api/health` in a tab
+  still reaches the server rather than the cached app.
+- **Secure contexts only.** Browsers allow service workers only on HTTPS and `localhost`, so a plain-HTTP address
+  (such as a tailnet IP without Tailscale Serve) works online but not offline. Settings says so instead of blaming the
+  browser.
 - **`ignoreVary` on cache lookups.** Some servers send `Vary: Origin`, and Vite's module script and stylesheet tags
   are requested with an `Origin` header the precache requests didn't have. Without it, offline loads failed. The
   end-to-end test caught this.
 - Registered only in production builds, so `npm run dev` is never served stale code.
-- **The sync API is never cached.** The worker leaves `api/` requests to the network, so sync always talks to the
-  live server, and an unreachable server shows up as offline rather than as stale data.
 
 ## Sync
 

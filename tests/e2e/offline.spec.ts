@@ -4,7 +4,7 @@ import { cp, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from '@playwright/test';
-import { cardPosition, waitForSavedDraft } from './helpers';
+import { cardPosition, freshWithStarterCards, startReview, waitForSavedDraft } from './helpers';
 
 // Playwright's offline emulation doesn't reach a service worker's own requests,
 // so this test serves the build itself and then shuts the server down: after
@@ -81,6 +81,44 @@ test('after one visit, the app loads and studies with the server gone', async ({
   } finally {
     await stopServer(server);
   }
+});
+
+test('with the device offline, a reload still opens Today with its cards', async ({ page, context }) => {
+  // The test above proves the files come from the cache; this one covers a
+  // phone in airplane mode, where the browser itself knows it's offline.
+  await freshWithStarterCards(page);
+  await page.evaluate(() => navigator.serviceWorker.ready);
+  await context.setOffline(true);
+  await page.reload();
+  expect(await page.evaluate(() => navigator.onLine)).toBe(false);
+  await expect(page.getByRole('heading', { name: /6\s*cards due/ })).toBeVisible();
+  await startReview(page);
+});
+
+test('sync API requests always go to the server, never through the offline cache', async ({ page }) => {
+  await page.goto('./');
+  await page.evaluate(() => navigator.serviceWorker.ready);
+  await expect.poll(() => page.evaluate(() => navigator.serviceWorker.controller !== null)).toBe(true);
+
+  // The preview server has no API, but the worker must still leave these alone.
+  const [apiResponse] = await Promise.all([
+    page.waitForResponse((r) => r.url().includes('/api/sync/v1/info')),
+    page.evaluate(() => fetch('./api/sync/v1/info', { cache: 'no-store' }).catch(() => null)),
+  ]);
+  expect(apiResponse.fromServiceWorker(), 'API fetch answered by the worker').toBe(false);
+  const opened = await page.goto('./api/health');
+  expect(opened?.fromServiceWorker(), 'API page answered by the worker').toBe(false);
+
+  await page.goto('./');
+  const cachedPaths = await page.evaluate(async () => {
+    const paths: string[] = [];
+    for (const key of await caches.keys()) {
+      for (const request of await (await caches.open(key)).keys()) paths.push(new URL(request.url).pathname);
+    }
+    return paths;
+  });
+  expect(cachedPaths).toContain('/index.html');
+  expect(cachedPaths.filter((path) => path.includes('/api/'))).toEqual([]);
 });
 
 test('a new deploy waits for the learner, then reloads into the new version without losing the session', async ({ page }) => {

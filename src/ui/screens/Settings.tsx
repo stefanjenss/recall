@@ -132,8 +132,9 @@ export function Settings() {
     ready: 'Ready. Recall opens and works on this device without a connection.',
     pending: 'Getting ready…',
     unsupported: 'Not available in this browser.',
+    insecure: 'Off, because this page wasn’t opened over HTTPS. Open Recall at its https:// address to use it offline.',
     disabled: 'Off in development builds; the published site supports it.',
-    error: 'Couldn’t be set up. Offline use needs the site to be served over HTTPS.',
+    error: 'Couldn’t be set up. Reloading the page tries again.',
   }[offline.status];
 
   const storageText = {
