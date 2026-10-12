@@ -76,8 +76,7 @@ export function buildBackup(data: WorkspaceData, now: number): BackupFile {
 }
 
 export type BackupValidation =
-  | { ok: true; data: WorkspaceData; counts: WorkspaceCounts; exportedAt: string | null }
-  | { ok: false; errors: string[] };
+  { ok: true; data: WorkspaceData; counts: WorkspaceCounts; exportedAt: string | null } | { ok: false; errors: string[] };
 
 export function checkBackupSize(bytes: number): string | null {
   if (bytes <= BACKUP_MAX_BYTES) return null;
@@ -198,7 +197,9 @@ function checkSchedule(v: V) {
   checkSnapshot(v);
   bool(v, 'paused');
   if (v.o.schedulerVersion !== SCHEDULER_VERSION) {
-    v.e.add(`${v.path}.schedulerVersion ${JSON.stringify(v.o.schedulerVersion)} isn't supported by this app (expects ${SCHEDULER_VERSION}).`);
+    v.e.add(
+      `${v.path}.schedulerVersion ${JSON.stringify(v.o.schedulerVersion)} isn't supported by this app (expects ${SCHEDULER_VERSION}).`,
+    );
   }
   num(v, 'lastReviewedAt', { nullable: true });
 }
@@ -270,7 +271,7 @@ function checkWithId(v: V) {
 function checkPreferences(v: V) {
   oneOf(v, 'schemaVersion', [1]);
   if (typeof v.o.timezone !== 'string' || !isValidTimeZone(v.o.timezone)) {
-    v.e.add(`${v.path}.timezone ${JSON.stringify(v.o.timezone)} is not a recognised IANA timezone.`);
+    v.e.add(`${v.path}.timezone ${JSON.stringify(v.o.timezone)} is not a recognized IANA timezone.`);
   }
   oneOf(v, 'readingSize', ['standard', 'large', 'larger']);
   oneOf(v, 'sessionSize', SESSION_SIZES);
@@ -302,7 +303,7 @@ export function validateBackup(value: unknown): BackupValidation {
         errors: ['This looks like a content-only export, not a full backup. Import it from Add knowledge → Import instead.'],
       };
     }
-    return { ok: false, errors: [`Unrecognised file: expected "format": "${BACKUP_FORMAT}".`] };
+    return { ok: false, errors: [`Unrecognized file: expected "format": "${BACKUP_FORMAT}".`] };
   }
   const version = value.formatVersion;
   if (typeof version !== 'number' || !Number.isInteger(version) || version < 1) {

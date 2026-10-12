@@ -150,7 +150,12 @@ describe('repository: sessions and reviews', () => {
     await repo.close();
 
     const restored = await repo.ensureAttempt(state.session.id, T0 + 5 * MIN);
-    expect(restored!.session.attempt).toMatchObject({ id: attempt.id, response: 'partial thought', confidence: 'unsure', revealed: false });
+    expect(restored!.session.attempt).toMatchObject({
+      id: attempt.id,
+      response: 'partial thought',
+      confidence: 'unsure',
+      revealed: false,
+    });
     expect(restored!.card!.id).toBe(state.card!.id);
     expect(restored!.session.queue).toEqual(state.session.queue);
 
@@ -158,7 +163,9 @@ describe('repository: sessions and reviews', () => {
     const again = await repo.ensureAttempt(state.session.id, T0 + 7 * MIN);
     expect(again!.session.attempt).toMatchObject({ revealed: true, response: 'final answer', confidence: 'confident' });
     // Once revealed, the response is frozen.
-    expect(await repo.saveDraft(state.session.id, attempt.id, { response: 'improved later', confidence: 'confident' })).toBe(false);
+    expect(await repo.saveDraft(state.session.id, attempt.id, { response: 'improved later', confidence: 'confident' })).toBe(
+      false,
+    );
   });
 
   it('AC09: retrying a commit returns the committed review with exactly one event and one transition', async () => {
@@ -246,14 +253,22 @@ describe('repository: sessions and reviews', () => {
     expect(edited).toMatchObject({ status: 'stale', reason: 'edited' });
     const refreshed = await repo.refreshAttempt(state.session.id, attempt.id, T0 + MIN);
     expect(refreshed!.card!.question).toBe('Q edited');
-    expect(refreshed!.session.attempt).toMatchObject({ response: 'draft one', confidence: 'unsure', revealed: false, cardVersion: 2 });
+    expect(refreshed!.session.attempt).toMatchObject({
+      response: 'draft one',
+      confidence: 'unsure',
+      revealed: false,
+      cardVersion: 2,
+    });
     expect(refreshed!.session.attempt!.id).not.toBe(attempt.id);
 
     state = refreshed!;
     attempt = state.session.attempt!;
     await repo.reveal(state.session.id, attempt.id, { response: 'r', confidence: null }, T0);
     await repo.setPaused(attempt.cardId, true);
-    expect(await repo.commitReview(state.session.id, attempt.id, 3, T0)).toMatchObject({ status: 'ineligible', reason: 'paused' });
+    expect(await repo.commitReview(state.session.id, attempt.id, 3, T0)).toMatchObject({
+      status: 'ineligible',
+      reason: 'paused',
+    });
     const skipped = await repo.skipCurrent(state.session.id, attempt.id, 'paused', T0);
     expect(skipped!.session.results.at(-1)).toMatchObject({ outcome: 'skipped', reason: 'paused' });
 
@@ -261,7 +276,10 @@ describe('repository: sessions and reviews', () => {
     attempt = state.session.attempt!;
     await repo.reveal(state.session.id, attempt.id, { response: 'r', confidence: null }, T0);
     await repo.deleteCard(attempt.cardId, T0);
-    expect(await repo.commitReview(state.session.id, attempt.id, 3, T0)).toMatchObject({ status: 'ineligible', reason: 'deleted' });
+    expect(await repo.commitReview(state.session.id, attempt.id, 3, T0)).toMatchObject({
+      status: 'ineligible',
+      reason: 'deleted',
+    });
     expect((await repo.loadWorkspace()).reviews).toHaveLength(0);
   });
 
@@ -324,7 +342,13 @@ describe('repository: backups and deletion', () => {
     const state = await startedState(repo);
     await revealAndRate(repo, state, 3, T0 + MIN);
     await repo.addReflection('Index trade-offs still feel shaky.', state.session.id, T0 + 2 * MIN);
-    await repo.savePreferences({ schemaVersion: 1, timezone: 'Europe/Berlin', readingSize: 'large', sessionSize: 10, aiMode: 'disabled' });
+    await repo.savePreferences({
+      schemaVersion: 1,
+      timezone: 'Europe/Berlin',
+      readingSize: 'large',
+      sessionSize: 10,
+      aiMode: 'disabled',
+    });
     await repo.setPaused(state.session.queue[2]!, true);
     return repo;
   }

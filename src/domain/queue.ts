@@ -18,12 +18,8 @@ export function isNew(schedule: Schedule): boolean {
   return schedule.reviewCount === 0;
 }
 
-/** Why a queued card can no longer be practised, or null when it still can. */
-export function ineligibility(
-  card: Card | undefined,
-  schedule: Schedule | undefined,
-  now: number,
-): SkipReason | null {
+/** Why a queued card can no longer be practiced, or null when it still can. */
+export function ineligibility(card: Card | undefined, schedule: Schedule | undefined, now: number): SkipReason | null {
   if (!card || !schedule || card.deletedAt !== null) return 'deleted';
   if (schedule.paused) return 'paused';
   if (schedule.dueAt > now) return 'not-due';
@@ -67,9 +63,7 @@ export interface QueueOptions {
  */
 export function buildQueue(items: CardWithSchedule[], { now, size, topics }: QueueOptions): string[] {
   const topicSet = topics ? new Set(topics) : null;
-  const eligible = items.filter(
-    ({ card, schedule }) => isDue(card, schedule, now) && (!topicSet || topicSet.has(card.topic)),
-  );
+  const eligible = items.filter(({ card, schedule }) => isDue(card, schedule, now) && (!topicSet || topicSet.has(card.topic)));
   const established = eligible.filter((i) => !isNew(i.schedule)).sort(byDueThenId);
   const fresh = eligible.filter((i) => isNew(i.schedule)).sort(byDueThenId);
 

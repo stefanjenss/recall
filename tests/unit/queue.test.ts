@@ -96,7 +96,7 @@ describe('buildQueue', () => {
 });
 
 describe('ineligibility', () => {
-  it('reports why a queued card can no longer be practised', () => {
+  it('reports why a queued card can no longer be practiced', () => {
     const ok = item('ok', 'A');
     expect(ineligibility(ok.card, ok.schedule, NOW)).toBeNull();
     const p = item('p', 'A', { paused: true });

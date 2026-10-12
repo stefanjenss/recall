@@ -54,18 +54,14 @@ export interface PracticeState {
 }
 
 export type StartResult =
-  | { status: 'started'; state: PracticeState }
-  | { status: 'active-exists'; session: Session }
-  | { status: 'empty' };
+  { status: 'started'; state: PracticeState } | { status: 'active-exists'; session: Session } | { status: 'empty' };
 
 export type CommitResult =
   | { status: 'committed' | 'duplicate'; review: Review; state: PracticeState }
   | { status: 'stale'; reason: 'session-changed' | 'reviewed-elsewhere' | 'edited'; state: PracticeState | null }
   | { status: 'ineligible'; reason: 'deleted' | 'paused'; state: PracticeState };
 
-export type AddCardsResult =
-  | { status: 'added'; cardIds: string[] }
-  | { status: 'already-imported'; cardIds: string[] };
+export type AddCardsResult = { status: 'added'; cardIds: string[] } | { status: 'already-imported'; cardIds: string[] };
 
 type Tx<S extends StoreName[], M extends IDBTransactionMode> = IDBPTransaction<RecallSchema, S, M>;
 
@@ -287,10 +283,7 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
   async function advance(tx: SessionTx, session: Session, now: number): Promise<PracticeState> {
     while (session.index < session.queue.length) {
       const cardId = session.queue[session.index]!;
-      const [card, schedule] = await Promise.all([
-        tx.objectStore('cards').get(cardId),
-        tx.objectStore('schedules').get(cardId),
-      ]);
+      const [card, schedule] = await Promise.all([tx.objectStore('cards').get(cardId), tx.objectStore('schedules').get(cardId)]);
       const reason = ineligibility(card, schedule, now);
       if (reason || !card || !schedule) {
         skip(session, cardId, reason ?? 'deleted', now);
@@ -330,10 +323,7 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
     return run(SESSION_STORES, 'readwrite', async (tx) => {
       const active = await tx.objectStore('sessions').index('byStatus').getAll('active');
       if (active[0]) return { status: 'active-exists', session: active[0] };
-      const [cards, schedules] = await Promise.all([
-        tx.objectStore('cards').getAll(),
-        tx.objectStore('schedules').getAll(),
-      ]);
+      const [cards, schedules] = await Promise.all([tx.objectStore('cards').getAll(), tx.objectStore('schedules').getAll()]);
       const byId = new Map(schedules.map((s) => [s.cardId, s]));
       const items = cards.flatMap((card) => {
         const schedule = byId.get(card.id);
@@ -427,7 +417,11 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
       const existing = await tx.objectStore('reviews').get(attemptId);
       const session = await tx.objectStore('sessions').get(sessionId);
       if (existing) {
-        return { status: 'duplicate', review: existing, state: session ? await loadState(sessionTx, session) : emptyState(existing) };
+        return {
+          status: 'duplicate',
+          review: existing,
+          state: session ? await loadState(sessionTx, session) : emptyState(existing),
+        };
       }
       const attempt = matchAttempt(session, attemptId);
       if (!session || !attempt) {
@@ -494,7 +488,12 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
   }
 
   /** Skip the current card (it was paused, deleted, or reviewed elsewhere). */
-  async function skipCurrent(sessionId: string, attemptId: string, reason: SkipReason, now: number): Promise<PracticeState | null> {
+  async function skipCurrent(
+    sessionId: string,
+    attemptId: string,
+    reason: SkipReason,
+    now: number,
+  ): Promise<PracticeState | null> {
     return run(SESSION_STORES, 'readwrite', async (tx) => {
       const session = await tx.objectStore('sessions').get(sessionId);
       if (!session) return null;

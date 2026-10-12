@@ -90,12 +90,7 @@ export function summarizeToday(
 }
 
 /** Next due time among unpaused cards matching `topic` (or any topic). */
-export function nextDueFor(
-  cards: Card[],
-  schedules: Map<string, Schedule>,
-  now: number,
-  topic: string | null,
-): number | null {
+export function nextDueFor(cards: Card[], schedules: Map<string, Schedule>, now: number, topic: string | null): number | null {
   let next: number | null = null;
   for (const card of cards) {
     if (!isActive(card) || (topic !== null && card.topic !== topic)) continue;

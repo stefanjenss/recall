@@ -60,7 +60,7 @@ export function parseKind(value: unknown): CardKind | null {
 }
 
 /**
- * Validate and normalise authored or imported card content. Question and
+ * Validate and normalize authored or imported card content. Question and
  * answer text is never altered; over-limit values are rejected rather than
  * truncated. Topic and source are trimmed; a blank topic becomes "General".
  */

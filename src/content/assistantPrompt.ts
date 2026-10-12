@@ -27,7 +27,7 @@ ${material.trim() || MATERIAL_PLACEHOLDER}
 
 HOW TO WRITE THE CARDS
 - One learning objective per card. Split broad ideas into several focused cards.
-- Ask questions that require producing the answer from memory, not recognising it. Avoid yes/no questions.
+- Ask questions that require producing the answer from memory, not recognizing it. Avoid yes/no questions.
 - Mix the kinds:
   - "recall": retrieve a fact, definition, or rule.
   - "apply": use the idea in a concrete scenario or problem.

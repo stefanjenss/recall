@@ -22,9 +22,7 @@ export interface ImportRow {
   rowError: string | null;
 }
 
-export type ParseResult =
-  | { ok: true; format: ImportFormat; rows: ImportRow[]; notes: string[] }
-  | { ok: false; error: string };
+export type ParseResult = { ok: true; format: ImportFormat; rows: ImportRow[]; notes: string[] } | { ok: false; error: string };
 
 const ALLOWED_EXTENSIONS = ['.json', '.tsv', '.txt'];
 
@@ -87,7 +85,7 @@ function parseJson(text: string): ParseResult {
     }
     items = obj.cards;
     if (obj.format === 'recall-v1' || obj.version === 'recall-v1' || obj.version === 1) {
-      notes.push('Recognised a recall-v1 content export.');
+      notes.push('Recognized a recall-v1 content export.');
     }
   } else {
     return { ok: false, error: 'JSON must be an array of cards, or an object with a "cards" array.' };
@@ -156,9 +154,7 @@ export interface ImportDraft extends ImportRow {
   keepDuplicate: boolean;
 }
 
-export type DuplicateInfo =
-  | { kind: 'existing'; cardId: string; topic: string }
-  | { kind: 'batch'; label: string };
+export type DuplicateInfo = { kind: 'existing'; cardId: string; topic: string } | { kind: 'batch'; label: string };
 
 export interface DraftCheck {
   key: string;

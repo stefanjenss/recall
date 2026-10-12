@@ -38,7 +38,8 @@ export interface RecallSchema extends DBSchema {
   meta: { key: string; value: MetaRecord };
 }
 
-export type StoreName = 'cards' | 'schedules' | 'reviews' | 'sessions' | 'reflections' | 'rubrics' | 'assessments' | 'importBatches' | 'meta';
+export type StoreName =
+  'cards' | 'schedules' | 'reviews' | 'sessions' | 'reflections' | 'rubrics' | 'assessments' | 'importBatches' | 'meta';
 
 export const ALL_STORES: StoreName[] = [
   'cards',

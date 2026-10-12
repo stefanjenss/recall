@@ -42,7 +42,7 @@ export const STARTER_CARDS: CardContent[] = [
     kind: 'compare',
     question: 'Compare blocked practice with interleaved practice.',
     answer:
-      '- **Blocked:** practise one type of problem repeatedly before moving on (AAA BBB CCC). It feels productive and performance during practice is high.\n- **Interleaved:** mix problem types (ABC CAB BCA). It feels harder, but you learn to recognise which approach a problem needs, which improves later performance.',
+      '- **Blocked:** practice one type of problem repeatedly before moving on (AAA BBB CCC). It feels productive and performance during practice is high.\n- **Interleaved:** mix problem types (ABC CAB BCA). It feels harder, but you learn to recognize which approach a problem needs, which improves later performance.',
     source: MAKE_IT_STICK,
   },
   {

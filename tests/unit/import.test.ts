@@ -46,12 +46,18 @@ describe('JSON import', () => {
         answer: '```python\ndef gen():\n    yield 1  # café ☕ 你好\n```\n\n  Indented line kept.  ',
         source: 'PEP 255',
       },
-      { topic: 'Learning', kind: 'explain', question: 'Why space practice? 🧠', answer: 'Forgetting makes retrieval effortful.', source: null },
+      {
+        topic: 'Learning',
+        kind: 'explain',
+        question: 'Why space practice? 🧠',
+        answer: 'Forgetting makes retrieval effortful.',
+        source: null,
+      },
     ];
     const text = JSON.stringify({ format: 'recall-v1', cards });
     const parsed = parseOk(text);
     expect(parsed.format).toBe('json');
-    expect(parsed.notes).toContain('Recognised a recall-v1 content export.');
+    expect(parsed.notes).toContain('Recognized a recall-v1 content export.');
     const drafts = toDrafts(parsed.rows);
     const checks = checkDrafts(drafts, []);
     const plan = planImport(drafts, checks);
