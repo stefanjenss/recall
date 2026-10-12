@@ -1,0 +1,224 @@
+/* App shell: a ~256px sidebar on wide screens; a compact top bar with a
+   disclosure menu on phones and portrait tablets. */
+
+.app {
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+.sidebar {
+  display: none;
+}
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  min-height: 3.5rem;
+  padding: 0.5rem var(--gutter);
+  padding-top: max(0.5rem, env(safe-area-inset-top));
+  background: var(--bg);
+  border-bottom: 1px solid var(--rule);
+}
+
+.topbar__brand {
+  color: var(--green);
+  text-decoration: none;
+}
+
+.topbar__status {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.topbar__due {
+  font-size: var(--text-meta);
+  font-weight: 600;
+  color: var(--green);
+  min-height: var(--touch);
+  display: inline-flex;
+  align-items: center;
+}
+
+.mobile-nav {
+  border-bottom: 1px solid var(--rule);
+  background: var(--paper);
+  padding: 0.25rem var(--gutter) 0.75rem;
+}
+
+.mobile-nav[hidden] {
+  display: none;
+}
+
+.main {
+  padding: 1.5rem var(--gutter) 4rem;
+  padding-bottom: max(4rem, env(safe-area-inset-bottom));
+  max-width: 72rem;
+}
+
+.main:focus {
+  outline: none;
+}
+
+.flash {
+  margin-bottom: 1.25rem;
+}
+
+/* Navigation list (shared by sidebar and mobile menu). */
+.nav__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.nav__link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-height: var(--touch);
+  padding: 0.5rem 0.75rem;
+  border-left: 3px solid transparent;
+  color: var(--ink);
+  text-decoration: none;
+  font-size: 1rem;
+}
+
+.nav__link:hover {
+  background: var(--paper-shade);
+}
+
+.nav__link[aria-current='page'] {
+  border-left-color: var(--green);
+  background: var(--lime-soft);
+  font-weight: 600;
+  color: var(--green);
+}
+
+.nav__count {
+  font-size: var(--text-meta);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  padding: 0 0.4rem;
+  background: var(--lime);
+  color: var(--ink);
+  border-radius: var(--radius);
+}
+
+.wordmark {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.wordmark__motif {
+  width: 1.75rem;
+  height: 1.5rem;
+  color: var(--green);
+  flex: none;
+}
+
+.wordmark__text {
+  font-family: var(--font-display);
+  font-size: 1.75rem;
+  line-height: 1;
+  color: var(--green);
+  letter-spacing: -0.01em;
+}
+
+.wordmark__dot {
+  color: var(--olive);
+}
+
+@media (min-width: 60rem) {
+  .app {
+    display: grid;
+    grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  }
+
+  .topbar,
+  .mobile-nav {
+    display: none !important;
+  }
+
+  .sidebar {
+    display: block;
+    background: var(--paper);
+    border-right: 1px solid var(--rule);
+  }
+
+  .sidebar__inner {
+    position: sticky;
+    top: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+    height: 100vh;
+    height: 100dvh;
+    overflow-y: auto;
+    padding: 1.75rem 1rem 1.25rem;
+  }
+
+  .sidebar__brand {
+    padding: 0 0.75rem;
+    text-decoration: none;
+  }
+
+  .sidebar__topics {
+    border-top: 1px solid var(--rule);
+    padding-top: 1rem;
+  }
+
+  .sidebar__topics .eyebrow {
+    padding: 0 0.75rem 0.5rem;
+  }
+
+  .sidebar__topics ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .sidebar__topics a {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.4rem 0.75rem;
+    color: var(--ink);
+    text-decoration: none;
+    font-size: 0.9375rem;
+  }
+
+  .sidebar__topics a:hover {
+    background: var(--paper-shade);
+  }
+
+  .sidebar__topic-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .sidebar__topic-count {
+    flex: none;
+    color: var(--ink-2);
+    font-size: var(--text-meta);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .sidebar__foot {
+    margin-top: auto;
+    padding: 0 0.75rem;
+    font-size: var(--text-meta);
+    color: var(--ink-2);
+  }
+
+  .main {
+    padding-top: 2.5rem;
+  }
+}

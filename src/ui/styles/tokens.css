@@ -1,0 +1,65 @@
+/* Design tokens. Palette from the original Recall theme; contrast pairs are
+   documented in docs/DECISIONS.md. */
+
+:root {
+  --bg: #f8f8f3;
+  --paper: #fffffa;
+  --paper-shade: #f1f2ea;
+  --ink: #282f28;
+  --ink-2: #606c59;
+  --rule: #dddfd5;
+  --rule-strong: #7d8775; /* form-control borders: >= 3:1 against paper */
+  --green: #344738;
+  --green-hover: #283a2c;
+  --on-green: #fffffa;
+  --olive: #6b7550;
+  --lime: #dce5ac;
+  --lime-soft: #eef2d6;
+
+  --danger: #8c3a2b;
+  --danger-soft: #f6e7e2;
+  --warn: #7a5a12;
+  --warn-soft: #f7efd9;
+
+  --rate-again: #9a4a3a;
+  --rate-hard: #8a6d1f;
+  --rate-good: #344738;
+  --rate-easy: #2f6b5a;
+
+  --font-display: 'Libre Caslon Display', 'Libre Caslon Text', Georgia, 'Times New Roman', serif;
+  --font-sans: 'DM Sans', system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace;
+
+  /* Study type scale (rem, so it follows the reading-size preference and browser zoom). */
+  --text-meta: 0.875rem; /* 14px minimum for secondary metadata */
+  --text-ui: 1rem;
+  --text-body: 1.125rem; /* 18px study body and inputs */
+  --text-answer: 1.25rem; /* 20px answers and feedback */
+  --text-question: clamp(1.625rem, 1.2rem + 1.1vw, 2.125rem); /* 26–34px */
+  --leading-study: 1.75;
+  --measure: 65ch;
+
+  --radius: 2px;
+  --sidebar-width: 16rem;
+  --gutter: clamp(1rem, 0.5rem + 2.5vw, 3rem);
+  --touch: 2.75rem; /* 44px */
+  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 5px var(--green);
+}
+
+html[data-reading-size='large'] {
+  font-size: 112.5%;
+}
+
+html[data-reading-size='larger'] {
+  font-size: 125%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
