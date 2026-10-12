@@ -20,6 +20,8 @@ export interface Workspace {
   lastBackupAt: number | null;
   /** Wall-clock time, refreshed every 30 seconds and when the tab regains focus. */
   now: number;
+  /** When this snapshot was read from storage. */
+  loadedAt: number;
   storage: StorageStatus;
   versionChanged: boolean;
   /** Reload from storage and tell other tabs. Call after every write. */
@@ -54,12 +56,14 @@ export function WorkspaceProvider({ children, dbName }: { children: ReactNode; d
   const [preferences, setPreferences] = useState<Preferences>(defaultPreferences);
   const [lastBackupAt, setLastBackupAt] = useState<number | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const [loadedAt, setLoadedAt] = useState(0);
   const [storage, setStorage] = useState<StorageStatus>('unknown');
   const channel = useRef<BroadcastChannel | null>(null);
   const persistAsked = useRef(false);
 
   const load = useCallback(async () => {
     try {
+      const started = Date.now();
       const ws = await repo.loadWorkspace();
       setCards(ws.cards);
       setSchedules(new Map(ws.schedules.map((s) => [s.cardId, s])));
@@ -69,6 +73,7 @@ export function WorkspaceProvider({ children, dbName }: { children: ReactNode; d
       setPreferences(ws.preferences);
       setLastBackupAt(ws.lastBackupAt);
       setNow(Date.now());
+      setLoadedAt(started);
       setStatus('ready');
       setError(null);
     } catch (err) {
@@ -162,6 +167,7 @@ export function WorkspaceProvider({ children, dbName }: { children: ReactNode; d
       preferences,
       lastBackupAt,
       now,
+      loadedAt,
       storage,
       versionChanged,
       refresh,
@@ -180,6 +186,7 @@ export function WorkspaceProvider({ children, dbName }: { children: ReactNode; d
     preferences,
     lastBackupAt,
     now,
+    loadedAt,
     storage,
     versionChanged,
     refresh,

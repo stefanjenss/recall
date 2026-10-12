@@ -102,26 +102,31 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
   // Workspace
 
   async function loadWorkspace(): Promise<WorkspaceSnapshot> {
-    return run(['cards', 'schedules', 'reviews', 'reflections', 'sessions', 'meta'], 'readonly', async (tx) => {
-      const [cards, schedules, reviews, reflections, active, prefs, lastBackup] = await Promise.all([
-        tx.objectStore('cards').getAll(),
-        tx.objectStore('schedules').getAll(),
-        tx.objectStore('reviews').index('byCommittedAt').getAll(),
-        tx.objectStore('reflections').index('byCreatedAt').getAll(),
-        tx.objectStore('sessions').index('byStatus').getAll('active'),
-        tx.objectStore('meta').get('preferences'),
-        tx.objectStore('meta').get('lastBackupAt'),
-      ]);
-      return {
-        cards,
-        schedules,
-        reviews,
-        reflections,
-        activeSession: active[0] ?? null,
-        preferences: normalizePreferences(prefs?.value),
-        lastBackupAt: typeof lastBackup?.value === 'number' ? lastBackup.value : null,
-      };
-    });
+    // Review history is read in its own transaction so a large history never
+    // holds up session writes (which touch cards, schedules, and sessions).
+    const [core, reviews] = await Promise.all([
+      run(['cards', 'schedules', 'reflections', 'sessions', 'meta'], 'readonly', (tx) =>
+        Promise.all([
+          tx.objectStore('cards').getAll(),
+          tx.objectStore('schedules').getAll(),
+          tx.objectStore('reflections').index('byCreatedAt').getAll(),
+          tx.objectStore('sessions').index('byStatus').getAll('active'),
+          tx.objectStore('meta').get('preferences'),
+          tx.objectStore('meta').get('lastBackupAt'),
+        ]),
+      ),
+      run(['reviews'], 'readonly', (tx) => tx.objectStore('reviews').index('byCommittedAt').getAll()),
+    ]);
+    const [cards, schedules, reflections, active, prefs, lastBackup] = core;
+    return {
+      cards,
+      schedules,
+      reviews,
+      reflections,
+      activeSession: active[0] ?? null,
+      preferences: normalizePreferences(prefs?.value),
+      lastBackupAt: typeof lastBackup?.value === 'number' ? lastBackup.value : null,
+    };
   }
 
   function normalizePreferences(value: unknown): Preferences {
@@ -614,13 +619,17 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
     await run(ALL_STORES, 'readwrite', async (tx) => {
       const lastBackup = await tx.objectStore('meta').get('lastBackupAt');
       await Promise.all(ALL_STORES.map((s) => tx.objectStore(s).clear()));
-      for (const c of data.cards) await tx.objectStore('cards').add(c);
-      for (const s of data.schedules) await tx.objectStore('schedules').add(s);
-      for (const r of data.reviews) await tx.objectStore('reviews').add(r);
-      for (const s of data.sessions) await tx.objectStore('sessions').add(s);
-      for (const r of data.reflections) await tx.objectStore('reflections').add(r);
-      for (const r of data.rubrics) await tx.objectStore('rubrics').add(r);
-      for (const a of data.assessments) await tx.objectStore('assessments').add(a);
+      // Queue every insert at once rather than awaiting each in turn: a single
+      // failure still aborts the whole transaction, and large restores stay fast.
+      await Promise.all([
+        ...data.cards.map((c) => tx.objectStore('cards').add(c)),
+        ...data.schedules.map((s) => tx.objectStore('schedules').add(s)),
+        ...data.reviews.map((r) => tx.objectStore('reviews').add(r)),
+        ...data.sessions.map((s) => tx.objectStore('sessions').add(s)),
+        ...data.reflections.map((r) => tx.objectStore('reflections').add(r)),
+        ...data.rubrics.map((r) => tx.objectStore('rubrics').add(r)),
+        ...data.assessments.map((a) => tx.objectStore('assessments').add(a)),
+      ]);
       if (data.preferences) await tx.objectStore('meta').put({ key: 'preferences', value: data.preferences });
       if (lastBackup) await tx.objectStore('meta').put(lastBackup);
     });

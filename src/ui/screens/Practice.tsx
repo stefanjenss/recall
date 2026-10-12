@@ -50,7 +50,7 @@ function message(err: unknown): string {
 
 export function Practice() {
   const ws = useWorkspace();
-  const { repo } = ws;
+  const { repo, refresh } = ws;
   const [state, setState] = useState<PracticeState | null>(null);
   const [phase, setPhase] = useState<Phase>('loading');
   const [response, setResponse] = useState('');
@@ -98,11 +98,12 @@ export function Practice() {
         return;
       }
       apply(await repo.ensureAttempt(active.id, Date.now()), 'question');
+      void refresh();
     } catch (err) {
       setPhase('none');
       setProblem({ kind: 'reveal-error', message: message(err) });
     }
-  }, [repo, apply]);
+  }, [repo, refresh, apply]);
 
   useEffect(() => {
     void load();
@@ -221,11 +222,13 @@ export function Practice() {
   // ---- Another tab moved this session on (rated, skipped, or ended it). ----
   useEffect(() => {
     if (ws.status !== 'ready' || !session || phase === 'loading' || phase === 'saving' || phase === 'revealing') return;
+    // A snapshot read before this session began knows nothing about it yet.
+    if (ws.loadedAt < session.startedAt) return;
     const remote = ws.activeSession;
     // A remote index at or behind ours is just this tab's own write not yet reflected in the workspace.
     if (remote && remote.id === session.id && remote.index <= session.index) return;
     setProblem((p) => p ?? { kind: 'session-changed' });
-  }, [ws.status, ws.activeSession, session, phase]);
+  }, [ws.status, ws.loadedAt, ws.activeSession, session, phase]);
 
   // ---- Keyboard: Space reveals, 1–4 rate. Never while typing, in a dialog, or saving. ----
   useEffect(() => {

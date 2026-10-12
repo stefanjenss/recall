@@ -89,8 +89,8 @@ function Shell() {
     }
     window.scrollTo(0, 0);
     requestAnimationFrame(() => mainRef.current?.querySelector<HTMLElement>('h1')?.focus());
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [routeKey]);
+    // Only navigation should trigger this; `flash` is read, not watched.
+  }, [routeKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const titles: Record<Destination, string> = {

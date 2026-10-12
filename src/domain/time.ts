@@ -14,11 +14,29 @@ function dayFormatter(timeZone: string): Intl.DateTimeFormat {
   return f;
 }
 
+// Every current UTC offset is a multiple of 15 minutes, so all instants in the
+// same 15-minute bucket share a calendar day. Caching per bucket keeps
+// aggregate views fast over tens of thousands of reviews.
+const BUCKET_MS = 15 * 60_000;
+const MAX_CACHED = 50_000;
+const dayCache = new Map<string, Map<number, string>>();
+
 /** The calendar day (YYYY-MM-DD) containing `ts` in `timeZone`. */
 export function dayKey(ts: number, timeZone: string): string {
-  const parts = dayFormatter(timeZone).formatToParts(ts);
+  let cache = dayCache.get(timeZone);
+  if (!cache) {
+    cache = new Map();
+    dayCache.set(timeZone, cache);
+  }
+  const bucket = Math.floor(ts / BUCKET_MS);
+  const hit = cache.get(bucket);
+  if (hit) return hit;
+  const parts = dayFormatter(timeZone).formatToParts(bucket * BUCKET_MS);
   const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
-  return `${get('year')}-${get('month')}-${get('day')}`;
+  const key = `${get('year')}-${get('month')}-${get('day')}`;
+  if (cache.size >= MAX_CACHED) cache.clear();
+  cache.set(bucket, key);
+  return key;
 }
 
 /** Civil-date arithmetic: "2026-03-08" + -1 → "2026-03-07". */

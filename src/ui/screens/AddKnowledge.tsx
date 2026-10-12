@@ -31,7 +31,7 @@ export function AddKnowledge({ mode }: { mode: 'write' | 'import' }) {
           Write a card
         </a>
         <a className="tabs__tab" href={href('add/import')} aria-current={mode === 'import' ? 'page' : undefined}>
-          Import from an assistant or file
+          Import cards
         </a>
       </nav>
       {mode === 'write' ? <WriteCard /> : <ImportCards />}

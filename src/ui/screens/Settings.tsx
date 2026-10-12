@@ -330,6 +330,9 @@ export function Settings() {
               <CountsTable counts={current} caption="Now in this browser" />
               <CountsTable counts={restore.counts} caption="In the backup" />
             </div>
+            {restore.counts.reviews + restore.counts.cards > 5000 ? (
+              <p className="muted">Large backups can take up to a minute to restore. Keep this tab open until it finishes.</p>
+            ) : null}
             <p>
               <button type="button" className="button button--secondary" onClick={() => void downloadFullBackup(ws)}>
                 Download a backup of current data first

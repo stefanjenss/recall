@@ -116,7 +116,7 @@ export function SessionSummary({ sessionId }: { sessionId: string }) {
         </h2>
         {ended && remaining > 0 ? (
           <p className="muted">
-            Ended with {remaining} card{remaining === 1 ? '' : 's'} not reached; they stay due.
+            Ended with {remaining} card{remaining === 1 ? '' : 's'} not reached; {remaining === 1 ? 'it stays' : 'they stay'} due.
           </p>
         ) : null}
 

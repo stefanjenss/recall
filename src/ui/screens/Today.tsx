@@ -17,7 +17,9 @@ export function Today() {
   const { show } = useFlash();
   const tz = ws.preferences.timezone;
   const [topic, setTopic] = useState<string>(ALL);
-  const [size, setSize] = useState<SessionSize>(ws.preferences.sessionSize);
+  // Preferences may finish loading after first render, so only a choice made here overrides them.
+  const [chosenSize, setSize] = useState<SessionSize | null>(null);
+  const size = chosenSize ?? ws.preferences.sessionSize;
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -40,7 +42,7 @@ export function Today() {
     try {
       const result = await ws.repo.startSession({ topics, size, now: Date.now() });
       if (result.status === 'started') {
-        await ws.refresh();
+        // Practice refreshes the workspace once its first card is on screen.
         navigate('practice');
       } else if (result.status === 'active-exists') {
         await ws.refresh();

@@ -133,3 +133,41 @@ test('an Again rating schedules the card for a later session and says so', async
   await page.getByRole('dialog').getByRole('button', { name: 'End session' }).click();
   await expect(page.getByText(/1 card rated Again will be due in 10 min/)).toBeVisible();
 });
+
+test('AC09: a failed save keeps the answer on screen, and retrying commits exactly once', async ({ page }) => {
+  await freshWithStarterCards(page);
+  await startReview(page);
+  await page.getByLabel('Your answer').fill('Kept through a failed save');
+  await page.getByRole('button', { name: /Reveal answer/ }).click();
+
+  // Make the next review insert fail, as a full disk or storage error would.
+  await page.evaluate(() => {
+    const original = IDBObjectStore.prototype.add;
+    IDBObjectStore.prototype.add = function (this: IDBObjectStore, ...args: Parameters<IDBObjectStore['add']>) {
+      if (this.name === 'reviews') {
+        IDBObjectStore.prototype.add = original;
+        throw new DOMException('Simulated storage failure', 'QuotaExceededError');
+      }
+      return original.apply(this, args);
+    };
+  });
+  await page.getByRole('button', { name: /^Good/ }).click();
+  await expect(page.getByText('That rating wasn’t saved')).toBeVisible();
+  await expect(page.getByText('Kept through a failed save')).toBeVisible();
+  await expect(cardPosition(page)).toContainText('Card 1 of 6');
+
+  await page.getByRole('button', { name: 'Retry “Good”' }).click();
+  await expect(cardPosition(page)).toContainText('Card 2 of 6');
+  await page.goto('./#/progress');
+  await expect(page.locator('.stat-list__item').first()).toContainText('1');
+});
+
+test('the default session size preference applies after a reload', async ({ page }) => {
+  await freshWithStarterCards(page);
+  await page.goto('./#/settings');
+  await page.getByRole('radio', { name: '5 cards' }).check();
+  await page.goto('./');
+  await page.reload();
+  await expect(page.getByRole('radio', { name: '5', exact: true })).toBeChecked();
+  await expect(page.getByRole('button', { name: /Start review · 5 cards/ })).toBeVisible();
+});

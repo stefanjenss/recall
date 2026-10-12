@@ -42,6 +42,7 @@ for (const [label, options] of Object.entries(viewports)) {
     await page.getByRole('button', { name: /Reveal answer/ }).click();
     await page.getByRole('button', { name: rating }).click();
   }
+  await page.getByText(`Card ${ratings.length + 1} of 5`).waitFor();
   const question = await page.locator('.practice__question').innerText();
   const attempt = Object.entries(SAMPLE_ATTEMPTS).find(([key]) => question.toLowerCase().includes(key))?.[1] ?? '';
   await page.getByRole('textbox', { name: 'Your answer' }).fill(attempt);
