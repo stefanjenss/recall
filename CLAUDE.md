@@ -24,6 +24,13 @@ spec is `docs/PRD.md`; read the relevant section before changing behavior.
   `docs/DATA.md`. A backup format change bumps `BACKUP_FORMAT_VERSION` and needs a migration path.
 - Scheduler changes need a new `schedulerVersion` and a migration. Never silently reinterpret `recall-sm2-v1` data.
 
+## Offline and deployment
+
+- `src/offline/sw.js` is a template; the `recallServiceWorker` plugin in `vite.config.ts` fills in the file list and
+  version and writes `dist/sw.js`. It's registered only in production builds, so end-to-end tests run with it.
+- New versions wait for the learner's "Reload now"; never call `skipWaiting()` on install.
+- Pushes to `main` deploy to GitHub Pages (`.github/workflows/deploy.yml`).
+
 ## UI conventions
 
 - Design tokens live in `src/ui/styles/tokens.css`. Rectangular panels (2px radius), fine rules, no pervasive pills or

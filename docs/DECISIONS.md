@@ -94,9 +94,25 @@ Changes made because of these measurements: restores queue all inserts at once i
 lookups are cached in 15-minute buckets; review history is read in its own transaction so it never delays session
 writes; and Practice refreshes the workspace only after its first card is on screen.
 
+## Hosting and offline
+
+- **GitHub Pages**, deployed by `.github/workflows/deploy.yml` on every push to `main` after `npm run check` passes. The
+  app is static and the data lives in each browser, so a server would add upkeep without adding function today. A home
+  server (the owner's Ubuntu box with Docker and Tailscale) is the planned place for P2 sync and any P1 inference
+  service, which do need one.
+- **A hand-written service worker** instead of `vite-plugin-pwa`/Workbox. It's about 60 lines, adds no dependencies, and
+  does one thing. A small Vite plugin in `vite.config.ts` writes `dist/sw.js` after each build, listing every output file
+  (except legacy `.woff` fonts; every browser with service workers uses `.woff2`) and a version hash of their contents.
+- **Precache everything, serve cache-first, update on request.** Each build gets its own cache (`recall-<hash>`).
+  Install fetches with `cache: 'reload'` so a new version never stores a stale `index.html` from the HTTP cache. A new
+  worker waits until the learner clicks **Reload now**. Swapping versions on its own could change the app in the middle
+  of a session. Old caches are deleted on activation.
+- **`ignoreVary` on cache lookups.** Some servers send `Vary: Origin`, and Vite's module script and stylesheet tags
+  are requested with an `Origin` header the precache requests didn't have. Without it, offline loads failed. The
+  end-to-end test caught this.
+- Registered only in production builds, so `npm run dev` is never served stale code.
+
 ## Not done, on purpose
 
-- No service worker or offline cache yet. The app works offline once loaded, but a fresh load needs the host. Adding a
-  service worker brings update and versioning concerns; worth a separate change.
 - No dark mode. The PRD centers the cream-and-green identity; a dark variant should be designed, not inverted.
 - No AI. The Settings page says so plainly. See the README roadmap.

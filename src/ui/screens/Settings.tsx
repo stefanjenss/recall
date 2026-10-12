@@ -5,6 +5,7 @@ import { useWorkspace } from '../../app/workspace';
 import { checkBackupSize, countWorkspace, parseBackupText, type WorkspaceCounts, type WorkspaceData } from '../../content/backup';
 import { browserTimeZone, formatDateTime, supportedTimeZones } from '../../domain/time';
 import { SESSION_SIZES, type ReadingSize, type SessionSize } from '../../domain/types';
+import { useOffline } from '../../offline/register';
 import { downloadContentExport, downloadFullBackup } from '../backupActions';
 import { ConfirmDialog, Notice, PageHeader, Segmented } from '../components/common';
 
@@ -119,6 +120,15 @@ export function Settings() {
     }
   }
 
+  const offline = useOffline();
+  const offlineText = {
+    ready: 'Ready. Recall opens and works on this device without a connection.',
+    pending: 'Getting ready…',
+    unsupported: 'Not available in this browser.',
+    disabled: 'Off in development builds; the published site supports it.',
+    error: 'Couldn’t be set up. Offline use needs the site to be served over HTTPS.',
+  }[offline.status];
+
   const storageText = {
     persisted: 'Persistent: the browser has agreed not to clear Recall’s data automatically.',
     'best-effort': 'Best effort: the browser may clear Recall’s data under storage pressure, or if you clear site data.',
@@ -195,7 +205,8 @@ export function Settings() {
           </p>
           <p>
             Clearing this site’s data, or private-browsing modes, will erase it. On iPhone and iPad, Safari can clear data for
-            sites you haven’t used in a while; adding Recall to your Home Screen avoids that.
+            sites you haven’t used in a while; adding Recall to your Home Screen (Share → Add to Home Screen) avoids that and
+            gives it its own app icon.
           </p>
         </div>
         <p className="muted">
@@ -217,6 +228,9 @@ export function Settings() {
               Ask for persistent storage
             </button>
           ) : null}
+        </p>
+        <p className="muted">
+          <strong>Offline use:</strong> {offlineText}
         </p>
         <p>
           <strong>Last full backup:</strong>{' '}

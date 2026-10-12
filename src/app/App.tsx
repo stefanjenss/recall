@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { summarizeToday } from '../domain/stats';
+import { applyUpdate, useOffline } from '../offline/register';
 import { Notice, Wordmark } from '../ui/components/common';
 import { AddKnowledge } from '../ui/screens/AddKnowledge';
 import { CardEditor } from '../ui/screens/CardEditor';
@@ -68,6 +69,7 @@ function Shell() {
   const route = useRoute();
   const ws = useWorkspace();
   const { flash, clear } = useFlash();
+  const offline = useOffline();
   const [menuOpen, setMenuOpen] = useState(false);
   const current = destinationOf(route);
   const routeKey = window.location.hash || '#/';
@@ -201,6 +203,16 @@ function Shell() {
               Reload
             </button>
           </Notice>
+        ) : null}
+        {offline.updateReady ? (
+          <div className="flash">
+            <Notice tone="info" title="A new version of Recall is ready">
+              <p>Reload to start using it. Your cards and review history stay as they are.</p>
+              <button type="button" className="button button--secondary" onClick={applyUpdate}>
+                Reload now
+              </button>
+            </Notice>
+          </div>
         ) : null}
         {flash && flash.hash === routeKey ? (
           <div className="flash">

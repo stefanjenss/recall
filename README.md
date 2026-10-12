@@ -84,14 +84,31 @@ Export your cards from the original app (its content export uses `recall-v1`), t
 and paste or choose the file. Content, Unicode, code, and multi-line answers are kept exactly. Content-only exports don't
 contain review history, so the imported cards start as new. Imports are reviewed in batches of up to 100 cards.
 
-## Deploying
+## Using it: GitHub Pages and offline
 
-`npm run build` produces a static site in `dist/` with relative asset paths and hash-based routing. You can host it
-anywhere that serves static files, including GitHub Pages, Netlify, Cloudflare Pages, or any web server, with no rewrite
-rules. Nothing is published automatically; choosing a host is up to you.
+Every push to `main` builds, tests, and publishes the app to **https://stefanjenss.github.io/recall/** through
+`.github/workflows/deploy.yml`. Nothing is published unless type-checking, formatting, unit tests, and the build all pass.
 
-Data stays per browser _per origin_. If you move the app to a different URL, your existing data stays with the old
-URL, so make a full backup first and restore it at the new address.
+**One-time setup:** in the repository's **Settings → Pages → Build and deployment**, set **Source** to **GitHub Actions**.
+If a deploy ran before that was set, re-run it from the Actions tab.
+
+**Offline:** after you've opened Recall once, it loads and works without a connection, so you can study on a plane or
+the subway. A service worker (`src/offline/sw.js`) caches the app's files. Your cards were always stored on the device,
+so study, reviews, and backups all work offline. When a new version is published, Recall downloads it in the
+background and shows **"A new version of Recall is ready"**; it switches only when you choose **Reload now**, never in
+the middle of a session. Settings → Your data and backups shows whether offline use is ready.
+
+**Install it like an app:** on iPhone or iPad, open the site in Safari and choose Share → Add to Home Screen. On
+Android or desktop Chrome, use Install app from the browser menu. A Home Screen install also stops Safari from clearing
+Recall's data after weeks without a visit.
+
+**Each web address keeps its own data.** The GitHub Pages URL, `localhost` during development, and any future address
+(such as a home server) are separate collections. To move, download a full backup at the old address and restore it
+at the new one. Also note that every GitHub Pages site under `stefanjenss.github.io` shares one browser origin, so only
+publish code you trust there; a custom domain would give Recall its own.
+
+**Other hosts:** `npm run build` produces a static site in `dist/` with relative asset paths and hash-based routing, so
+any static file server works without rewrite rules. Offline support needs HTTPS (or `localhost`).
 
 ## Project layout
 
@@ -101,10 +118,11 @@ src/
   content/    Import parsing/validation, content export, full backup format, starter cards, assistant prompt
   storage/    IndexedDB schema (db.ts) and the repository: the only code that reads or writes storage
   app/        App shell, hash router, workspace context, flash messages
+  offline/    Service worker template and registration (offline use, update prompt)
   ui/         Screens, shared components, Markdown rendering, styles
 tests/
   unit/       Scheduler, queue, time/DST, import, Markdown safety, repository (transactions, backups)
-  e2e/        Study loop, keyboard rules, refresh recovery, two tabs, import, backup/restore, a11y, reflow
+  e2e/        Study loop, keyboard rules, refresh recovery, two tabs, import, backup/restore, a11y, reflow, offline
 scripts/      Screenshot capture, a 5,000-card performance check, icon rendering
 docs/         PRD, decisions, data/backup schema, acceptance checklist, screenshots
 ```
