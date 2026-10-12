@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { cardPosition, freshWithStarterCards, startReview } from './helpers';
+import { cardPosition, freshWithStarterCards, startReview, storedRecords } from './helpers';
 
 test('AC01: a fresh install adds cards and completes a persisted session with no sign-in or AI', async ({ page }) => {
   await freshWithStarterCards(page);
@@ -74,7 +74,13 @@ test('AC08: refreshing mid-attempt restores the card, draft, confidence, reveal 
   const question = await page.locator('.practice__question').innerText();
   await page.getByLabel('Your answer').fill('A draft I do not want to lose');
   await page.getByRole('radio', { name: 'Unsure' }).check();
-  await page.waitForTimeout(700); // draft save is debounced
+  // The draft saves after a debounce with nothing on screen to wait for, so wait until it's stored.
+  await expect
+    .poll(async () => {
+      const sessions = await storedRecords<{ status: string; attempt: unknown }>(page, 'sessions');
+      return sessions.find((s) => s.status === 'active')?.attempt;
+    })
+    .toMatchObject({ response: 'A draft I do not want to lose', confidence: 'unsure' });
 
   await page.reload();
   await expect(page.locator('.practice__question')).toHaveText(question);
@@ -83,6 +89,8 @@ test('AC08: refreshing mid-attempt restores the card, draft, confidence, reveal 
   await expect(cardPosition(page)).toContainText('Card 1 of 6');
 
   await page.getByRole('button', { name: /Reveal answer/ }).click();
+  // The answer appears once the reveal is stored; reloading sooner would abort the write.
+  await expect(page.getByRole('heading', { name: 'Answer', exact: true })).toBeVisible();
   await page.reload();
   await expect(page.getByRole('heading', { name: 'Answer', exact: true })).toBeVisible();
   await expect(page.getByText('A draft I do not want to lose')).toBeVisible();
@@ -166,6 +174,13 @@ test('the default session size preference applies after a reload', async ({ page
   await freshWithStarterCards(page);
   await page.goto('./#/settings');
   await page.getByRole('radio', { name: '5 cards' }).check();
+  // The radio changes before the preference is stored, so wait for the stored copy before leaving.
+  await expect
+    .poll(async () => {
+      const meta = await storedRecords<{ key: string; value: { sessionSize?: number } }>(page, 'meta');
+      return meta.find((r) => r.key === 'preferences')?.value.sessionSize;
+    })
+    .toBe(5);
   await page.goto('./');
   await page.reload();
   await expect(page.getByRole('radio', { name: '5', exact: true })).toBeChecked();
