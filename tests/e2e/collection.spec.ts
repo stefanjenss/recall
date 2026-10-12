@@ -76,6 +76,7 @@ test('AC11: edit keeps the schedule; pause, resume, and delete follow eligibilit
   await page.goto('./#/collection?status=paused');
   await page.locator('.card-row').first().click();
   await page.getByRole('button', { name: 'Resume card' }).click();
+  await expect(page.getByText('Card resumed.')).toBeVisible();
   await page.goto('./');
   await expect(page.getByRole('heading', { name: /6\s*cards due/ })).toBeVisible();
 

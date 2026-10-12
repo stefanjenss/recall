@@ -4,7 +4,7 @@ import { cp, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from '@playwright/test';
-import { cardPosition } from './helpers';
+import { cardPosition, waitForSavedDraft } from './helpers';
 
 // Playwright's offline emulation doesn't reach a service worker's own requests,
 // so this test serves the build itself and then shuts the server down: after
@@ -94,7 +94,7 @@ test('a new deploy waits for the learner, then reloads into the new version with
     await page.evaluate(() => navigator.serviceWorker.ready);
     await page.getByRole('button', { name: /Start review/ }).click();
     await page.getByLabel('Your answer').fill('Draft typed before the update');
-    await page.waitForTimeout(600); // let the debounced draft save
+    await waitForSavedDraft(page, 'Draft typed before the update', null);
 
     // Publish a new version: different index.html and a new service worker version.
     const index = join(dir, 'index.html');
