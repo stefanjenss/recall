@@ -7,7 +7,7 @@ Test environment: the development container (Linux, headless Chromium 141 via Pl
 on two Playwright projects: **desktop** (1440×900) and **phone** (Pixel 7 emulation, touch). No real phones, tablets,
 Safari, or Firefox have been tested yet.
 
-Run everything with `npm test` (102 unit and server tests) and `npm run test:e2e` (46 end-to-end runs: 23 tests × 2
+Run everything with `npm test` (102 unit and server tests) and `npm run test:e2e` (50 end-to-end runs: 25 tests × 2
 projects, with the 2 sync tests running once each because they drive their own laptop and phone).
 
 | ID   | Scenario                                                    | Status                       | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
@@ -40,16 +40,18 @@ checks.
 
 ## Other PRD requirements
 
-| Requirement                                                                      | Status                                                                                                                                 |
-| -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| Safe Markdown (no raw HTML, no unsafe links, code scrolls in its own region)     | **Pass**: `markdown.test.ts`; code blocks are keyboard-focusable                                                                       |
-| Field limits rejected with field-specific messages, never truncated              | **Pass**: `import.test.ts`, live counters in forms                                                                                     |
-| Starter collection, with repeats skipped                                         | **Pass**: repository and e2e tests                                                                                                     |
-| Session sizes 5/10/20 and topic practice with an explanation when nothing is due | **Pass**: implemented; the topic case is covered in `repository.test.ts`                                                               |
-| Leaving a session offers Resume or End and never rates on its own                | **Pass**: `study.spec.ts`                                                                                                              |
-| Request persistent storage and handle denial                                     | Implemented; shown in Settings. **Untested** in automation (headless Chromium grants silently)                                         |
-| 5,000-card responsiveness (< 200 ms navigation and filtering)                    | Measured; see [DECISIONS.md](DECISIONS.md#performance). Navigation and filtering 36–99 ms; starting a session 224 ms; cold load 889 ms |
-| Screenshots: Today, Practice, answer, Collection, Progress at desktop and mobile | Done: [`screenshots/`](screenshots/), regenerated with `scripts/screenshots.mjs`                                                       |
+| Requirement                                                                      | Status                                                                                                                                       |
+| -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Safe Markdown (no raw HTML, no unsafe links, code scrolls in its own region)     | **Pass**: `markdown.test.ts`; code blocks are keyboard-focusable                                                                             |
+| Field limits rejected with field-specific messages, never truncated              | **Pass**: `import.test.ts`, live counters in forms                                                                                           |
+| Starter collection, with repeats skipped                                         | **Pass**: repository and e2e tests                                                                                                           |
+| Session sizes 5/10/20 and topic practice with an explanation when nothing is due | **Pass**: implemented; the topic case is covered in `repository.test.ts`                                                                     |
+| Leaving a session offers Resume or End and never rates on its own                | **Pass**: `study.spec.ts`                                                                                                                    |
+| Request persistent storage and handle denial                                     | Implemented; shown in Settings. **Untested** in automation (headless Chromium grants silently)                                               |
+| 5,000-card responsiveness (< 200 ms navigation and filtering)                    | Measured; see [DECISIONS.md](DECISIONS.md#performance). Navigation and filtering 36–99 ms; starting a session 224 ms; cold load 889 ms       |
+| Screenshots: Today, Practice, answer, Collection, Progress at desktop and mobile | Done: [`screenshots/`](screenshots/), regenerated with `scripts/screenshots.mjs`                                                             |
+| Works offline after the first visit (beyond the PRD)                             | **Pass**: `offline.spec.ts` shuts the server down, then reloads and completes a review from the service worker cache                         |
+| New versions never interrupt a session                                           | **Pass**: `offline.spec.ts` publishes a new build mid-answer; the prompt appears, nothing reloads until "Reload now", and the draft survives |
 
 ## Sync between devices (post-P0)
 

@@ -94,6 +94,26 @@ Changes made because of these measurements: restores queue all inserts at once i
 lookups are cached in 15-minute buckets; review history is read in its own transaction so it never delays session
 writes; and Practice refreshes the workspace only after its first card is on screen.
 
+## Hosting and offline
+
+- **GitHub Pages**, deployed by `.github/workflows/deploy.yml` on every push to `main` after `npm run check` passes. The
+  app is static and the data lives in each browser, so it needs no server of its own. The home server (the owner's
+  Ubuntu box with Docker and Tailscale) runs the optional sync server (see [Sync](#sync)) and is the planned place for
+  any P1 inference service.
+- **A hand-written service worker** instead of `vite-plugin-pwa`/Workbox. It's about 60 lines, adds no dependencies, and
+  does one thing. A small Vite plugin in `vite.config.ts` writes `dist/sw.js` after each build, listing every output file
+  (except legacy `.woff` fonts; every browser with service workers uses `.woff2`) and a version hash of their contents.
+- **Precache everything, serve cache-first, update on request.** Each build gets its own cache (`recall-<hash>`).
+  Install fetches with `cache: 'reload'` so a new version never stores a stale `index.html` from the HTTP cache. A new
+  worker waits until the learner clicks **Reload now**. Swapping versions on its own could change the app in the middle
+  of a session. Old caches are deleted on activation.
+- **`ignoreVary` on cache lookups.** Some servers send `Vary: Origin`, and Vite's module script and stylesheet tags
+  are requested with an `Origin` header the precache requests didn't have. Without it, offline loads failed. The
+  end-to-end test caught this.
+- Registered only in production builds, so `npm run dev` is never served stale code.
+- **The sync API is never cached.** The worker leaves `api/` requests to the network, so sync always talks to the
+  live server, and an unreachable server shows up as offline rather than as stale data.
+
 ## Sync
 
 Added after P0 as the PRD's P2 "sync across devices", scoped to one person with their own server. Setup and behavior
@@ -138,15 +158,13 @@ authentication, storage, backups, running cost, and the reason; those are covere
   single-user server reachable only on a private tailnet. It is not per-device: revoking one device means changing the
   key on all of them.
 - **Same-origin by default.** The server serves the built app as well as the API, which avoids CORS, mixed-content
-  blocking, and Chrome's private-network prompts, and lets the app ship a strict Content Security Policy. Other origins
-  can be allowed with `RECALL_ALLOWED_ORIGINS`.
-- **Not done:** a service worker (so the app opens offline when the server is unreachable), per-device keys, pairing by
-  QR code, end-to-end encryption of the server copy, and automatic server-side backup rotation (the `backup` command
-  plus cron covers it).
+  blocking, and Chrome's private-network prompts, and lets the app ship a strict Content Security Policy. The service
+  worker caches that copy too, so it still opens when the server is unreachable. The GitHub Pages copy can sync as well
+  once its origin is allowed with `RECALL_ALLOWED_ORIGINS`.
+- **Not done:** per-device keys, pairing by QR code, end-to-end encryption of the server copy, and automatic
+  server-side backup rotation (the `backup` command plus cron covers it).
 
 ## Not done, on purpose
 
-- No service worker or offline cache yet. The app works offline once loaded, but a fresh load needs the host. Adding a
-  service worker brings update and versioning concerns; worth a separate change.
 - No dark mode. The PRD centers the cream-and-green identity; a dark variant should be designed, not inverted.
 - No AI. The Settings page says so plainly. See the README roadmap.

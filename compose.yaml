@@ -9,6 +9,9 @@ services:
       - '127.0.0.1:8787:8787'
     volumes:
       - recall-data:/data
+    # To let the GitHub Pages copy sync too (docs/SYNC.md):
+    # environment:
+    #   RECALL_ALLOWED_ORIGINS: https://stefanjenss.github.io
 
 volumes:
   recall-data:

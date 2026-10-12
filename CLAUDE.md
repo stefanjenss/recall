@@ -30,6 +30,14 @@ spec is `docs/PRD.md`; read the relevant section before changing behavior.
   `client.ts` and `engine.ts`) is shared with the server and must stay pure. Conflict rules live only in
   `src/sync/merge.ts` and run only on the server. Wire format changes bump `SYNC_PROTOCOL`.
 
+## Offline and deployment
+
+- `src/offline/sw.js` is a template; the `recallServiceWorker` plugin in `vite.config.ts` fills in the file list and
+  version and writes `dist/sw.js`. It's registered only in production builds, so end-to-end tests run with it.
+- New versions wait for the learner's "Reload now"; never call `skipWaiting()` on install.
+- The worker leaves `api/` requests (the sync API, when the sync server serves the app) to the network; never cache them.
+- Pushes to `main` deploy to GitHub Pages (`.github/workflows/deploy.yml`).
+
 ## UI conventions
 
 - Design tokens live in `src/ui/styles/tokens.css`. Rectangular panels (2px radius), fine rules, no pervasive pills or

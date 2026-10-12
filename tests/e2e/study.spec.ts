@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { cardPosition, freshWithStarterCards, startReview } from './helpers';
+import { cardPosition, freshWithStarterCards, readStore, startReview, waitForSavedDraft } from './helpers';
 
 test('AC01: a fresh install adds cards and completes a persisted session with no sign-in or AI', async ({ page }) => {
   await freshWithStarterCards(page);
@@ -74,7 +74,7 @@ test('AC08: refreshing mid-attempt restores the card, draft, confidence, reveal 
   const question = await page.locator('.practice__question').innerText();
   await page.getByLabel('Your answer').fill('A draft I do not want to lose');
   await page.getByRole('radio', { name: 'Unsure' }).check();
-  await page.waitForTimeout(700); // draft save is debounced
+  await waitForSavedDraft(page, 'A draft I do not want to lose', 'unsure');
 
   await page.reload();
   await expect(page.locator('.practice__question')).toHaveText(question);
@@ -83,6 +83,8 @@ test('AC08: refreshing mid-attempt restores the card, draft, confidence, reveal 
   await expect(cardPosition(page)).toContainText('Card 1 of 6');
 
   await page.getByRole('button', { name: /Reveal answer/ }).click();
+  // The answer appears only after the reveal is saved; reloading sooner would abort that save.
+  await expect(page.getByRole('heading', { name: 'Answer', exact: true })).toBeVisible();
   await page.reload();
   await expect(page.getByRole('heading', { name: 'Answer', exact: true })).toBeVisible();
   await expect(page.getByText('A draft I do not want to lose')).toBeVisible();
@@ -166,6 +168,12 @@ test('the default session size preference applies after a reload', async ({ page
   await freshWithStarterCards(page);
   await page.goto('./#/settings');
   await page.getByRole('radio', { name: '5 cards' }).check();
+  await expect
+    .poll(async () => {
+      const meta = await readStore<{ key: string; value: { sessionSize?: number } }>(page, 'meta');
+      return meta.find((m) => m.key === 'preferences')?.value.sessionSize;
+    })
+    .toBe(5);
   await page.goto('./');
   await page.reload();
   await expect(page.getByRole('radio', { name: '5', exact: true })).toBeChecked();

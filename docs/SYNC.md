@@ -8,7 +8,8 @@ server such as a Lenovo ThinkCentre. This guide covers how it works, how to set 
 - **Every device keeps a full copy** in its own browser storage and works offline. Sync is an addition to the local
   app, not a replacement for it.
 - **The server keeps one more copy** in a SQLite file, and also serves the app itself. Opening the server's address in a
-  browser gives you Recall, and that copy can sync with the server it came from.
+  browser gives you Recall, and that copy can sync with the server it came from. Like the GitHub Pages copy, it keeps
+  working offline after the first visit, because the service worker caches the app.
 - **Changes move in both directions automatically.** A device syncs when it opens, about 1.5 seconds after you change
   something, when you switch back to the tab, when the browser comes back online, and every 5 minutes. When you leave
   the tab, Recall tries to send anything not yet uploaded before the browser suspends it. Settings → Sync between
@@ -89,9 +90,11 @@ would put the server on the public internet.
 
 ## Connect your devices
 
-Data in a browser belongs to the address it was saved under. If you've been using Recall at another address, such as a
-local development server or GitHub Pages, bring that data along first. Open the old address, go to Settings → Download
+Data in a browser belongs to the address it was saved under. If you've been using Recall at another address, such as
+GitHub Pages or a local development server, bring that data along first. Open the old address, go to Settings → Download
 full backup, then open the server's address and restore the backup under Settings → Restore from a full backup.
+Alternatively, keep using the GitHub Pages copy and let it sync too (see
+[Syncing the GitHub Pages copy](#syncing-the-github-pages-copy)).
 
 1. **Laptop:** open `https://thinkcentre.<your-tailnet>.ts.net`. In Settings → Sync between devices, the server address
    is already filled in. Paste the sync key, choose **Check connection**, then **Connect and upload this device's
@@ -172,12 +175,18 @@ Pull the new code, then run `docker compose up -d --build`, or `npm ci && npm ru
 Deleting data in a device's Settings removes only that device's copy and disconnects it. To delete the server's copy,
 stop the server and delete its data folder (Docker: `docker compose down -v`).
 
-## Serving the app from somewhere else
+## Syncing the GitHub Pages copy
 
-The simplest setup serves the app from the sync server, as above. If you'd rather keep the app on another host, such as
-GitHub Pages, set `RECALL_ALLOWED_ORIGINS` to that page's origin (for example `https://you.github.io`), and enter the
-Tailscale address in Settings. Two caveats apply. The page must be HTTPS to reach an HTTPS server. And some browsers ask
-for permission before a public page can reach an address on your private network.
+The simplest setup uses the app served by the sync server, as above. To keep using
+`https://stefanjenss.github.io/recall/` instead, start the server with
+`RECALL_ALLOWED_ORIGINS=https://stefanjenss.github.io` (in `compose.yaml`, under `environment:`). Then enter the
+Tailscale address, such as `https://thinkcentre.your-tailnet.ts.net`, in that copy's Settings → Sync between devices.
+Two caveats apply:
+
+- Some browsers ask for permission before a public page can reach an address on your private network. Chrome shows a
+  prompt the first time.
+- Every GitHub Pages site under `stefanjenss.github.io` shares one browser origin, so any of them could read the sync
+  key stored there. Only publish code you trust under that account, or give Recall its own domain.
 
 ## Security notes
 
@@ -194,9 +203,8 @@ for permission before a public page can reach an address on your private network
 ## Limits
 
 - **One person per server.** There's a single key and a single collection, with no separate accounts.
-- **Opening the app needs the server.** A page that's already open, or an installed Home Screen app that iOS kept in
-  memory, keeps working offline. A fresh load needs the server to be reachable, because Recall has no service worker
-  yet.
+- **The first visit needs the server.** After that, the service worker lets the app open and work without it, and
+  changes sync once the server is reachable again.
 - **During a long first sync**, a card can briefly arrive before its schedule. The app treats such a card as not yet
   practicable until the rest arrives a moment later.
 
