@@ -7,7 +7,8 @@ Test environment: the development container (Linux, headless Chromium 141 via Pl
 on two Playwright projects: **desktop** (1440×900) and **phone** (Pixel 7 emulation, touch). No real phones, tablets,
 Safari, or Firefox have been tested yet.
 
-Run everything with `npm test` (70 unit tests) and `npm run test:e2e` (42 end-to-end runs: 21 tests × 2 projects).
+Run everything with `npm test` (102 unit and server tests) and `npm run test:e2e` (46 end-to-end runs: 23 tests × 2
+projects, with the 2 sync tests running once each because they drive their own laptop and phone).
 
 | ID   | Scenario                                                    | Status                       | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | ---- | ----------------------------------------------------------- | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -49,3 +50,23 @@ checks.
 | Request persistent storage and handle denial                                     | Implemented; shown in Settings. **Untested** in automation (headless Chromium grants silently)                                         |
 | 5,000-card responsiveness (< 200 ms navigation and filtering)                    | Measured; see [DECISIONS.md](DECISIONS.md#performance). Navigation and filtering 36–99 ms; starting a session 224 ms; cold load 889 ms |
 | Screenshots: Today, Practice, answer, Collection, Progress at desktop and mobile | Done: [`screenshots/`](screenshots/), regenerated with `scripts/screenshots.mjs`                                                       |
+
+## Sync between devices (post-P0)
+
+Self-hosted sync from [SYNC.md](SYNC.md). Verified on macOS with Node 22.20 and Google Chrome through Playwright, because
+Playwright's bundled Chromium wasn't installed there.
+
+| Scenario                                                               | Status       | Evidence                                                                                                                                       |
+| ---------------------------------------------------------------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| A new device downloads an existing collection, preferences included    | **Pass**     | `tests/server/sync.test.ts`; `sync.spec.ts` connects a laptop (upload) and a phone (download) through the real server binary                   |
+| A review on one device reaches the other with its schedule and session | **Pass**     | `sync.test.ts`; `sync.spec.ts` reviews on the phone and sees "Reviewed today: 1" and one fewer card due on the laptop                          |
+| Active sessions stay on their device until they end                    | **Pass**     | `sync.test.ts`; the server refuses active sessions                                                                                             |
+| Conflicting offline edits converge on the later one on both devices    | **Pass**     | `sync.test.ts`, plus clock tests in `sync-core.test.ts` (skewed clocks, ties, ordering)                                                        |
+| Delete beats a concurrent edit                                         | **Pass**     | `sync.test.ts`, `sync-core.test.ts`                                                                                                            |
+| Joining with data on both sides asks first; replacing confirms         | **Pass**     | `sync.spec.ts` (three choices, confirmation dialog, phone-only card gone afterward); `sync.test.ts` covers combine, download, replace          |
+| Replacing the server saves a backup and stops other devices            | **Pass**     | `sync.test.ts` (before-reset file written; the other device gets `server-changed` and records it)                                              |
+| A change made while its earlier version uploads isn't lost             | **Pass**     | `sync.test.ts` edits during a push and checks the later edit reaches the server                                                                |
+| Wrong key, unreachable server, clock far ahead                         | **Pass**     | `sync.test.ts`; `sync.spec.ts` shows "The server rejected the sync key."                                                                       |
+| Server auth, invalid records, static files can't escape `dist/`, CSP   | **Pass**     | `sync.test.ts` "sync server"                                                                                                                   |
+| Accessibility and reflow of the sync settings                          | **Partial**  | axe on the connected Settings screen and no horizontal scroll on a 390 px phone in `sync.spec.ts`; the a11y suite covers the disconnected form |
+| Docker image, systemd unit, Tailscale Serve, a real iPhone             | **Untested** | Neither Docker nor Tailscale was available where this was built; the setup steps in SYNC.md haven't been run on a ThinkCentre yet              |

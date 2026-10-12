@@ -1,5 +1,8 @@
 dist
+dist-server
+data
 node_modules
 package-lock.json
 docs/PRD.md
 public
+.claude

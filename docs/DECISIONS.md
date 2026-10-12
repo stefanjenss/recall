@@ -94,6 +94,56 @@ Changes made because of these measurements: restores queue all inserts at once i
 lookups are cached in 15-minute buckets; review history is read in its own transaction so it never delays session
 writes; and Practice refreshes the workspace only after its first card is on screen.
 
+## Sync
+
+Added after P0 as the PRD's P2 "sync across devices", scoped to one person with their own server. Setup and behavior
+are in [SYNC.md](SYNC.md), formats in [DATA.md](DATA.md#sync). The PRD asks that a server-backed scope change document
+authentication, storage, backups, running cost, and the reason; those are covered here and in SYNC.md.
+
+- **Why a self-hosted server.** The goal is one person's phone and laptop sharing one collection, and the learner
+  already runs a home server. A server they own keeps the "nothing goes to anyone else" promise, has no hosting cost
+  beyond the machine that's already on, and needs no accounts. Hosted multi-user sync stays out of scope.
+- **Offline first.** IndexedDB remains the source of truth on each device; the app works the same with the server
+  down. Sync copies records between full replicas instead of moving storage to the server.
+- **Record-level last-writer-wins, decided by the server.** Each record travels whole with a hybrid logical clock stamp.
+  The server applies a few pure rules (`src/sync/merge.ts`): the later stamp wins, reviews never change once stored, and
+  a delete beats a concurrent edit. Devices accept whatever the server stores unless they hold a newer local change.
+  The server is the single place conflicts are resolved, so devices converge even when the rules combine fields. That
+  rules out per-field merging (for example, a pause on one device and a review on another: the later schedule wins
+  whole). For one person, conflicting edits need two devices changing the same card while one is offline, so whole
+  records are an acceptable trade for a much simpler design.
+- **Hybrid logical clock, not plain timestamps.** Wall clocks on two devices can differ by seconds. The HLC makes any
+  change made after seeing another device's change sort later, regardless of skew. The server refuses stamps more than a
+  day ahead of its clock, so a device with a badly wrong date can't override everything.
+- **Outbox in the same transaction.** Every repository write that changes a synced record also queues it in `outbox`
+  in the same IndexedDB transaction, so a crash can't lose a change or sync a change that didn't commit. All writes
+  already go through `repository.ts`, so this needed no changes in screens. The outbox is only written while connected;
+  connecting queues every existing record, stamped with when it last changed.
+- **Active sessions stay local.** A session in progress holds a draft and a queue built on one device; syncing it would
+  mean two devices sharing one "active session" and breaking the at-most-one-active rule. Reviews sync as they happen;
+  the session record follows when it ends.
+- **Pull by sequence number, without echoes.** Every write on the server gets the next sequence number, so a device
+  pulls "everything since N" and never misses a change. Rows remember which device wrote them as-is; that device isn't
+  sent them back, which keeps a first upload of a large collection from downloading it all again. Because of this, a
+  device gets a fresh ID on every connection.
+- **Joining is explicit.** When both the device and the server have data, the learner chooses: take the server's copy
+  (the usual way to add a device), combine, or replace the server's copy. Replacing makes the server save a JSON backup
+  first and changes its ID, so other devices stop and ask to reconnect rather than silently mixing old and new data.
+  Restoring a backup on a device disconnects it for the same reason.
+- **Server stack.** Node's built-in `node:sqlite` and `node:http`, bundled with Vite into one file with no runtime
+  dependencies, so the home server needs only Node 22.13+ or Docker. `node:sqlite` still prints an experimental
+  warning; it's stable enough for a single-user store and is suppressed in the provided start commands. The server
+  reuses `src/content/backup.ts` to validate every incoming record and to write backups in the format the app restores.
+- **Auth.** One random 256-bit key, compared in constant time and sent only in a header. That's enough for a
+  single-user server reachable only on a private tailnet. It is not per-device: revoking one device means changing the
+  key on all of them.
+- **Same-origin by default.** The server serves the built app as well as the API, which avoids CORS, mixed-content
+  blocking, and Chrome's private-network prompts, and lets the app ship a strict Content Security Policy. Other origins
+  can be allowed with `RECALL_ALLOWED_ORIGINS`.
+- **Not done:** a service worker (so the app opens offline when the server is unreachable), per-device keys, pairing by
+  QR code, end-to-end encryption of the server copy, and automatic server-side backup rotation (the `backup` command
+  plus cron covers it).
+
 ## Not done, on purpose
 
 - No service worker or offline cache yet. The app works offline once loaded, but a fresh load needs the host. Adding a

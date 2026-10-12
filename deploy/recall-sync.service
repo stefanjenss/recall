@@ -1,0 +1,36 @@
+# systemd unit for the Recall sync server without Docker. See docs/SYNC.md.
+# Assumes a `recall` system user (sudo useradd --system --home /var/lib/recall --shell /usr/sbin/nologin recall),
+# the repository built in /opt/recall (npm ci && npm run build && npm run build:server), and Node.js 22.13 or
+# newer at /usr/bin/node. Data and the sync key live in /var/lib/recall.
+
+[Unit]
+Description=Recall sync server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=recall
+Group=recall
+StateDirectory=recall
+StateDirectoryMode=0700
+WorkingDirectory=/opt/recall
+Environment=RECALL_HOST=127.0.0.1
+Environment=RECALL_PORT=8787
+Environment=RECALL_DATA_DIR=/var/lib/recall
+ExecStart=/usr/bin/node --disable-warning=ExperimentalWarning /opt/recall/dist-server/recall-server.mjs serve
+Restart=on-failure
+RestartSec=5
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

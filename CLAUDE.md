@@ -7,8 +7,10 @@ spec is `docs/PRD.md`; read the relevant section before changing behavior.
 
 - `npm run dev`: dev server on :5173
 - `npm test`: Vitest unit tests (fake-indexeddb)
-- `npm run test:e2e`: Playwright (builds, then serves on :4173; reuses a server that's already running there)
-- `npm run check`: typecheck + prettier check + unit tests + build (what CI runs)
+- `npm run test:e2e`: Playwright (builds, then serves on :4173; reuses a server that's already running there). The
+  sync spec starts its own sync servers on :4300+
+- `npm run build:server` / `npm run server`: bundle and run the sync server (`server/`, on :8787, data in `./data`)
+- `npm run check`: typecheck + prettier check + unit tests + both builds (what CI runs)
 - `npm run format`: Prettier
 
 ## Architecture rules
@@ -23,6 +25,10 @@ spec is `docs/PRD.md`; read the relevant section before changing behavior.
 - Schema changes: bump `DB_VERSION` in `src/storage/db.ts`, add an `if (oldVersion < N)` block, and update
   `docs/DATA.md`. A backup format change bumps `BACKUP_FORMAT_VERSION` and needs a migration path.
 - Scheduler changes need a new `schedulerVersion` and a migration. Never silently reinterpret `recall-sm2-v1` data.
+- Sync (`docs/SYNC.md`, `docs/DATA.md#sync`): any repository write that changes a synced record must call
+  `markChanged` in the same transaction, which needs `'meta'` and `'outbox'` in its store list. `src/sync/` (except
+  `client.ts` and `engine.ts`) is shared with the server and must stay pure. Conflict rules live only in
+  `src/sync/merge.ts` and run only on the server. Wire format changes bump `SYNC_PROTOCOL`.
 
 ## UI conventions
 

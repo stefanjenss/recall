@@ -5,7 +5,8 @@ repetition, interleaving, and reflection. It's a quiet study studio rather than 
 honest attempt from memory, a check, and a well-timed return.
 
 This is the standalone rebuild of the original Recall app described in [`docs/PRD.md`](docs/PRD.md). It runs entirely
-in the browser, with no account, server, or AI service.
+in the browser, with no account or AI service. Optionally, a small server you run yourself keeps your phone and laptop
+in sync.
 
 | Today                                        | Practice                                           | Answer                                         |
 | -------------------------------------------- | -------------------------------------------------- | ---------------------------------------------- |
@@ -26,8 +27,8 @@ More screenshots, at desktop and phone widths, are in [`docs/screenshots/`](docs
   and paste its JSON back in. Every import is validated and previewed before anything is saved.
 - **Progress:** 14-day activity, self-ratings (labelled as self-reported), cards with long intervals, a confidence vs.
   self-rating comparison, and your saved reflections.
-- **Settings:** reading size, default session size, timezone, full backups and restore, content export, and deleting
-  all data.
+- **Settings:** reading size, default session size, timezone, sync between devices, full backups and restore, content
+  export, and deleting all data.
 
 AI grading and in-app card generation are not part of this version (they're P1 in the PRD and need an approved
 inference provider). See [Roadmap](#roadmap).
@@ -43,24 +44,27 @@ npm run dev          # http://localhost:5173
 
 Other scripts:
 
-| Command            | What it does                                                         |
-| ------------------ | -------------------------------------------------------------------- |
-| `npm run build`    | Type-check and build static files into `dist/`                       |
-| `npm run preview`  | Serve the production build at http://localhost:4173                  |
-| `npm test`         | Unit tests (Vitest, with an in-memory IndexedDB)                     |
-| `npm run test:e2e` | End-to-end, accessibility, and reflow tests in Chromium (Playwright) |
-| `npm run check`    | Type-check, formatting check, unit tests, and build: what CI runs    |
-| `npm run format`   | Format with Prettier                                                 |
+| Command                | What it does                                                            |
+| ---------------------- | ----------------------------------------------------------------------- |
+| `npm run build`        | Type-check and build static files into `dist/`                          |
+| `npm run build:server` | Bundle the sync server into `dist-server/recall-server.mjs`             |
+| `npm run server`       | Start the sync server (after both builds)                               |
+| `npm run preview`      | Serve the production build at http://localhost:4173                     |
+| `npm test`             | Unit tests (Vitest, with an in-memory IndexedDB)                        |
+| `npm run test:e2e`     | End-to-end, accessibility, and reflow tests in Chromium (Playwright)    |
+| `npm run check`        | Type-check, formatting check, unit tests, and both builds: what CI runs |
+| `npm run format`       | Format with Prettier                                                    |
 
 The first time you run end-to-end tests on a new machine, install the browser: `npx playwright install chromium`.
 
 ## Where your data lives
 
-Everything is stored in your browser's IndexedDB on the device you're using. Nothing is sent anywhere.
+Everything is stored in your browser's IndexedDB on the device you're using. Nothing is sent anywhere unless you
+connect a sync server.
 
 - **Each browser has its own collection.** Opening Recall on your phone and your laptop gives you two separate
-  collections. To move data between them, download a full backup on one and restore it on the other (Settings →
-  Your data and backups). There is no sync yet.
+  collections. To keep them in step automatically, run the sync server (below). Without it, download a full backup on
+  one and restore it on the other (Settings → Your data and backups).
 - **Browser data can be cleared.** Clearing site data, private browsing, or storage pressure can remove it. Recall asks
   the browser for persistent storage once you've added cards, and Settings shows whether it was granted.
 - **iPhone and iPad:** Safari may delete site data for sites you haven't visited in a while. Add Recall to your Home
@@ -84,11 +88,26 @@ Export your cards from the original app (its content export uses `recall-v1`), t
 and paste or choose the file. Content, Unicode, code, and multi-line answers are kept exactly. Content-only exports don't
 contain review history, so the imported cards start as new. Imports are reviewed in batches of up to 100 cards.
 
+## Sync between devices
+
+`server/` is a small, dependency-free Node.js server, meant for a home server reachable over Tailscale. It serves the
+app and keeps a copy of your data in SQLite. Each device keeps working offline and syncs changes in both directions
+whenever the server is reachable. Conflicting edits resolve to the most recent change, and reviews are never lost.
+
+```bash
+npm run build && npm run build:server
+npm run server                          # http://127.0.0.1:8787, data in ./data
+```
+
+Or use `docker compose up -d --build`. Then connect each device in Settings → Sync between devices with the key from
+`node dist-server/recall-server.mjs key`. The full setup, including Tailscale Serve for HTTPS, is in
+[`docs/SYNC.md`](docs/SYNC.md).
+
 ## Deploying
 
 `npm run build` produces a static site in `dist/` with relative asset paths and hash-based routing. You can host it
 anywhere that serves static files, including GitHub Pages, Netlify, Cloudflare Pages, or any web server, with no rewrite
-rules. Nothing is published automatically; choosing a host is up to you.
+rules. The sync server serves it too. Nothing is published automatically; choosing a host is up to you.
 
 Data stays per browser _per origin_. If you move the app to a different URL, your existing data stays with the old
 URL, so make a full backup first and restore it at the new address.
@@ -100,25 +119,29 @@ src/
   domain/     Pure logic: types, scheduler (recall-sm2-v1), queue building, limits, time, stats
   content/    Import parsing/validation, content export, full backup format, starter cards, assistant prompt
   storage/    IndexedDB schema (db.ts) and the repository: the only code that reads or writes storage
-  app/        App shell, hash router, workspace context, flash messages
+  sync/       Sync clock, wire format, and merge rules (shared with the server), HTTP client, sync pass
+  app/        App shell, hash router, workspace and sync contexts, flash messages
   ui/         Screens, shared components, Markdown rendering, styles
+server/       Sync server: SQLite store, HTTP routes, static file serving, CLI entry
+deploy/       systemd unit for running the sync server without Docker
 tests/
-  unit/       Scheduler, queue, time/DST, import, Markdown safety, repository (transactions, backups)
-  e2e/        Study loop, keyboard rules, refresh recovery, two tabs, import, backup/restore, a11y, reflow
+  unit/       Scheduler, queue, time/DST, import, Markdown safety, repository (transactions, backups), sync rules
+  server/     Two devices syncing through the real server handler; server auth, validation, static files
+  e2e/        Study loop, keyboard rules, refresh recovery, two tabs, import, backup/restore, sync, a11y, reflow
 scripts/      Screenshot capture, a 5,000-card performance check, icon rendering
-docs/         PRD, decisions, data/backup schema, acceptance checklist, screenshots
+docs/         PRD, decisions, data/backup/sync formats, sync setup, acceptance checklist, screenshots
 ```
 
 More detail: [`docs/DECISIONS.md`](docs/DECISIONS.md) (technical choices),
-[`docs/DATA.md`](docs/DATA.md) (storage, backup, and import formats), and
-[`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md) (what has been verified, and how).
+[`docs/DATA.md`](docs/DATA.md) (storage, backup, import, and sync formats), [`docs/SYNC.md`](docs/SYNC.md) (sync
+setup), and [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md) (what has been verified, and how).
 
 ## Roadmap
 
-From the PRD, in priority order. None of these are built yet.
+From the PRD, in priority order. Self-hosted sync (part of P2) is built; the rest isn't yet.
 
 - **P1 — AI grading and generation.** Rubrics, a provider-neutral evaluator interface, and structured feedback on
   what's right, missing, or wrong. Grading needs a verified inference route and your sign-off on its cost and access. A
   hosted provider would need a small backend or proxy, because API keys can't live in a static site.
-- **P2 — Sync, FSRS, and more.** Account-backed sync across devices, an FSRS scheduler (versioned, with a migration),
-  burying related cards, reminders, and agent/MCP card saving.
+- **P2 — FSRS and more.** An FSRS scheduler (versioned, with a migration), burying related cards, reminders, and
+  agent/MCP card saving. Sync is self-hosted and single-user; hosted, account-backed sync isn't planned.

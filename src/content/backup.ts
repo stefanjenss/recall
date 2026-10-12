@@ -291,6 +291,18 @@ const CHECKERS: Record<CollectionName, (v: V) => void> = {
   assessments: checkWithId,
 };
 
+export type RecordKind = CollectionName | 'preferences';
+
+/** Validate one record with the same rules a restore uses. Returns the problems found, or [] when valid. */
+export function validateRecord(kind: RecordKind, value: unknown): string[] {
+  if (!isObj(value)) return [`${kind} record must be an object.`];
+  const e = new Errors();
+  const v = { e, path: kind, o: value };
+  if (kind === 'preferences') checkPreferences(v);
+  else CHECKERS[kind](v);
+  return e.result();
+}
+
 /** Dry-run validation. Nothing is written until the learner confirms a valid result. */
 export function validateBackup(value: unknown): BackupValidation {
   const e = new Errors();

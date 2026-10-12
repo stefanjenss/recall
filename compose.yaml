@@ -1,0 +1,14 @@
+# Recall sync server for a home server. Listens on the host's loopback only;
+# reach it from your devices through Tailscale Serve (see docs/SYNC.md).
+services:
+  recall:
+    build: .
+    image: recall-sync
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:8787:8787'
+    volumes:
+      - recall-data:/data
+
+volumes:
+  recall-data:

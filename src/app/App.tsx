@@ -12,6 +12,7 @@ import { Settings } from '../ui/screens/Settings';
 import { Today } from '../ui/screens/Today';
 import { FlashProvider, useFlash } from './flash';
 import { href, useRoute, type Route } from './router';
+import { needsReconnect, SyncProvider, useSync } from './sync';
 import { useWorkspace, WorkspaceProvider } from './workspace';
 
 type Destination = 'today' | 'collection' | 'add' | 'progress' | 'method' | 'settings' | 'practice';
@@ -160,7 +161,7 @@ function Shell() {
               </ul>
             </nav>
           ) : null}
-          <p className="sidebar__foot">Stored in this browser only.</p>
+          <SyncFoot />
         </div>
       </aside>
 
@@ -215,12 +216,37 @@ function Shell() {
   );
 }
 
+/** Where the data lives, and whether sync needs attention. */
+function SyncFoot() {
+  const { status, syncing } = useSync();
+  if (!status) return <p className="sidebar__foot">Stored in this browser only.</p>;
+  // "thinkcentre" from thinkcentre.tail1234.ts.net; IP addresses stay whole.
+  const { hostname, host: hostWithPort } = new URL(status.url);
+  const host = /^[\d.]+$|^\[/.test(hostname) ? hostWithPort : hostname.split('.')[0];
+  const problem = status.lastError && status.lastError.kind !== 'offline';
+  return (
+    <p className="sidebar__foot">
+      {syncing ? (
+        `Syncing with ${host}…`
+      ) : needsReconnect(status) || problem ? (
+        <a href={href('settings')}>Sync stopped. See Settings.</a>
+      ) : status.lastError ? (
+        `Saved here. Will sync with ${host} when it’s reachable.`
+      ) : (
+        `Synced with ${host}.`
+      )}
+    </p>
+  );
+}
+
 export function App() {
   return (
     <WorkspaceProvider>
-      <FlashProvider>
-        <Shell />
-      </FlashProvider>
+      <SyncProvider>
+        <FlashProvider>
+          <Shell />
+        </FlashProvider>
+      </SyncProvider>
     </WorkspaceProvider>
   );
 }

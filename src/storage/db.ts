@@ -1,5 +1,6 @@
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
 import type { Assessment, Card, Reflection, Review, Rubric, Schedule, Session } from '../domain/types';
+import type { SyncStore } from '../sync/protocol';
 
 export const DB_NAME = 'recall';
 
@@ -7,7 +8,7 @@ export const DB_NAME = 'recall';
  * Storage schema version. Each bump adds a case to `upgrade` below; never
  * edit a past case. See docs/DATA.md for the history.
  */
-export const DB_VERSION = 1;
+export const DB_VERSION = 2;
 
 export interface ImportBatchRecord {
   id: string;
@@ -18,6 +19,16 @@ export interface ImportBatchRecord {
 export interface MetaRecord {
   key: string;
   value: unknown;
+}
+
+/** A record changed on this device that the sync server hasn't acknowledged yet. */
+export interface OutboxEntry {
+  /** `${store}/${key}`: one entry per record, however many times it changed. */
+  id: string;
+  store: SyncStore;
+  key: string;
+  /** Clock stamp of the latest local change. */
+  hlc: string;
 }
 
 export interface RecallSchema extends DBSchema {
@@ -36,10 +47,21 @@ export interface RecallSchema extends DBSchema {
   importBatches: { key: string; value: ImportBatchRecord };
   /** Preferences and small bookkeeping values, keyed by name. */
   meta: { key: string; value: MetaRecord };
+  /** Local changes waiting to sync. Only written while sync is connected. */
+  outbox: { key: string; value: OutboxEntry };
 }
 
 export type StoreName =
-  'cards' | 'schedules' | 'reviews' | 'sessions' | 'reflections' | 'rubrics' | 'assessments' | 'importBatches' | 'meta';
+  | 'cards'
+  | 'schedules'
+  | 'reviews'
+  | 'sessions'
+  | 'reflections'
+  | 'rubrics'
+  | 'assessments'
+  | 'importBatches'
+  | 'meta'
+  | 'outbox';
 
 export const ALL_STORES: StoreName[] = [
   'cards',
@@ -51,6 +73,7 @@ export const ALL_STORES: StoreName[] = [
   'assessments',
   'importBatches',
   'meta',
+  'outbox',
 ];
 
 export type RecallDb = IDBPDatabase<RecallSchema>;
@@ -81,7 +104,10 @@ export function openRecallDb(name: string = DB_NAME, opts: OpenOptions = {}): Pr
         db.createObjectStore('importBatches', { keyPath: 'id' });
         db.createObjectStore('meta', { keyPath: 'key' });
       }
-      // Future migrations: `if (oldVersion < 2) { ... }`
+      if (oldVersion < 2) {
+        db.createObjectStore('outbox', { keyPath: 'id' });
+      }
+      // Future migrations: `if (oldVersion < 3) { ... }`
     },
     blocking(_current, _next, event) {
       (event.target as IDBDatabase | null)?.close();
