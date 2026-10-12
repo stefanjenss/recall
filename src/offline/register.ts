@@ -4,7 +4,7 @@
 
 import { useSyncExternalStore } from 'react';
 
-export type OfflineStatus = 'pending' | 'ready' | 'unsupported' | 'disabled' | 'error';
+export type OfflineStatus = 'pending' | 'ready' | 'unsupported' | 'insecure' | 'disabled' | 'error';
 
 export interface OfflineState {
   status: OfflineStatus;
@@ -42,6 +42,11 @@ export function applyUpdate(): void {
 export function registerServiceWorker(): void {
   if (!import.meta.env.PROD) {
     update({ status: 'disabled' });
+    return;
+  }
+  if (!window.isSecureContext) {
+    // Browsers allow service workers only on HTTPS pages and localhost.
+    update({ status: 'insecure' });
     return;
   }
   if (!('serviceWorker' in navigator)) {

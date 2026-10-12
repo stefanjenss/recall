@@ -93,10 +93,11 @@ Every push to `main` builds, tests, and publishes the app to **https://stefanjen
 If a deploy ran before that was set, re-run it from the Actions tab.
 
 **Offline:** after you've opened Recall once, it loads and works without a connection, so you can study on a plane or
-the subway. A service worker (`src/offline/sw.js`) caches the app's files. Your cards were always stored on the device,
-so study, reviews, and backups all work offline. When a new version is published, Recall downloads it in the
-background and shows **"A new version of Recall is ready"**; it switches only when you choose **Reload now**, never in
-the middle of a session. Settings → Your data and backups shows whether offline use is ready.
+the subway. A service worker (`src/offline/sw.js`) caches the app's own files and nothing else; requests to a server's
+`api/` always go to the network. Your cards were always stored on the device, so study, reviews, and backups all work
+offline. When a new version is published, Recall downloads it in the background and shows **"A new version of Recall is
+ready"**; it switches only when you choose **Reload now**, never in the middle of a session. Settings → Your data and
+backups shows whether offline use is ready.
 
 **Install it like an app:** on iPhone or iPad, open the site in Safari and choose Share → Add to Home Screen. On
 Android or desktop Chrome, use Install app from the browser menu. A Home Screen install also stops Safari from clearing
@@ -108,7 +109,8 @@ at the new one. Also note that every GitHub Pages site under `stefanjenss.github
 publish code you trust there; a custom domain would give Recall its own.
 
 **Other hosts:** `npm run build` produces a static site in `dist/` with relative asset paths and hash-based routing, so
-any static file server works without rewrite rules. Offline support needs HTTPS (or `localhost`).
+any static file server works without rewrite rules. Offline support needs HTTPS (or `localhost`): over plain HTTP the
+app works while it can reach the host, and Settings shows offline use as off.
 
 ## Project layout
 
