@@ -73,9 +73,22 @@ usable only once or twice in a row. PRD §7 and §8 have the spec; these are the
 
 - **Name.** The UI calls it "Quick check", described as "Multiple choice · recognition, not recall". The copy rules favor
   plain honesty over a self-deprecating label.
-- **One mode per session.** Today offers Full recall or Quick check before starting. A per-card "show options" escape
-  hatch inside a full-recall attempt wasn't built; it would mix two scoring rules in one session and needs its own
-  design.
+- **One mode per session.** Today offers Full recall or Quick check before starting, and `Session.mode` never changes.
+- **Show options, per card.** Added after the first release: inside a full-recall session, a card that has options and
+  is under the quick-check limit offers a quiet "Show options" beside Reveal answer, before reveal only. Scoring is
+  decided per review, not per session: the switch converts the current attempt (same ID, shuffled `options`,
+  `picked: null`) in one transaction, guarded like a commit (deleted, paused, reviewed elsewhere, edited), and the pick
+  then goes through `commitQuickCheck`, so the review is `mode: 'quick-check'`, the schedule uses the quick-check rule,
+  and the switch counts toward the 2-in-a-row limit. The session stays `mode: 'recall'`; its summary lists switched
+  cards on their own line. The switch is one way, because once the options are on screen a full recall would be
+  recognition anyway.
+  The switch writes only the active session, which doesn't sync; the review and the finished session sync like any
+  others, and pass the server's per-record checks.
+- **What happens to a typed draft on a switch.** It's kept: the response and confidence typed before the switch are
+  frozen onto the attempt and saved with the quick-check review, then shown beside the result as "What you typed
+  first". Discarding the learner's words would break the rule that a draft is never lost, and the review's `response`
+  field already exists. They aren't scored: correctness comes only from the pick, and quick checks stay out of the
+  confidence table.
 - **The weighting.** A correct pick leaves interval, ease, and review count alone and brings the card back in
   min(2, max(1, floor(I))) days: never sooner than a day, never later than the card's current interval or 2 days. A
   wrong pick is a full Again, ease penalty and lapse included, because missing with the answer on screen is strong

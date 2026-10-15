@@ -48,7 +48,10 @@ export function Progress() {
           {
             label: 'Reviews, all time',
             value: p.totalReviews.toLocaleString(),
-            note: p.quickChecks.total > 0 ? `incl. ${p.quickChecks.total.toLocaleString()} quick checks` : undefined,
+            note:
+              p.quickChecks.total > 0
+                ? `incl. ${p.quickChecks.total.toLocaleString()} quick check${p.quickChecks.total === 1 ? '' : 's'}`
+                : undefined,
           },
           { label: `Last ${WINDOW} days`, value: p.reviewsInWindow.toLocaleString(), note: 'reviews' },
           { label: 'Today', value: p.reviewsToday, note: p.reviewsToday === 1 ? 'review' : 'reviews' },

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { href, navigate } from '../../app/router';
 import { useWorkspace } from '../../app/workspace';
+import { canQuickCheck } from '../../domain/choices';
 import { charCount, LIMITS, overLimitMessage } from '../../domain/limits';
 import { DAY_MS, formatInterval, previewQuickCheck, previewRatings, QUICK_CHECK_LIMIT } from '../../domain/scheduler';
 import {
@@ -178,6 +179,38 @@ export function Practice() {
     }
   }, [phase, session, attempt, response, confidence, repo, apply]);
 
+  /**
+   * Drawing a blank: turn this full-recall attempt into a quick check on the
+   * same card. Whatever was typed is kept with the attempt; only the pick is scored.
+   */
+  const showOptions = useCallback(async () => {
+    if (phase !== 'answering' || !session || !attempt || attempt.options) return;
+    const tooLong = overLimitMessage('Your answer', response, LIMITS.response);
+    if (tooLong) {
+      setInputError(tooLong);
+      return;
+    }
+    setPhase('revealing');
+    setProblem(null);
+    try {
+      const result = await repo.showOptions(session.id, attempt.id, { response, confidence });
+      if (result.status === 'stale' && result.reason === 'session-changed') {
+        apply(result.state, 'question');
+        setProblem({ kind: 'session-changed' });
+        return;
+      }
+      if (result.status !== 'switched') {
+        setPhase('answering');
+        setProblem({ kind: result.reason });
+        return;
+      }
+      apply(result.state, 'answer');
+    } catch (err) {
+      setPhase('answering');
+      setProblem({ kind: 'reveal-error', message: message(err) });
+    }
+  }, [phase, session, attempt, response, confidence, repo, apply]);
+
   /** Quick check: the first pick freezes the attempt and shows the result. */
   const pick = useCallback(
     async (index: number) => {
@@ -242,8 +275,9 @@ export function Practice() {
 
   const loadUpdated = useCallback(async () => {
     if (!session || !attempt) return;
+    flushDraft(); // the fresh attempt keeps the draft, so save what's typed first
     apply(await repo.refreshAttempt(session.id, attempt.id, Date.now()), 'question');
-  }, [session, attempt, repo, apply]);
+  }, [session, attempt, repo, apply, flushDraft]);
 
   const endSession = useCallback(async () => {
     if (!session) return;
@@ -266,7 +300,8 @@ export function Practice() {
 
   // ---- Keyboard. Full recall: Space reveals, 1–4 rate. Quick check: 1–4 pick, Space continues.
   // Never while typing, in a dialog, or saving. ----
-  const quick = session?.mode === 'quick-check';
+  // A quick check is the attempt's mode: a quick-check session, or one card switched to its options.
+  const quick = !!attempt?.options;
   const optionCount = attempt?.options?.length ?? 0;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -336,6 +371,7 @@ export function Practice() {
   const previews = state?.schedule ? previewRatings(state.schedule, ws.now) : [];
   const ratingBlocked = !!problem && problem.kind !== 'save-error';
   const isNewCard = state?.schedule?.reviewCount === 0;
+  const canShowOptions = !quick && !!state?.schedule && canQuickCheck(card, state.schedule);
   const problemNotice = problem ? (
     <ProblemNotice problem={problem} onRetry={commit} onSkip={skipCard} onLoadUpdated={loadUpdated} onReload={load} />
   ) : null;
@@ -395,10 +431,11 @@ export function Practice() {
         </h2>
         <Markdown source={card.question} className="practice__question" />
 
-        {quick && attempt.options ? (
+        {attempt.options ? (
           <QuickCheck
             options={attempt.options}
             picked={attempt.picked}
+            typed={attempt.response}
             correctOption={card.choices?.correct ?? null}
             answer={card.answer}
             source={card.source}
@@ -408,7 +445,7 @@ export function Practice() {
             reachesLimit={(state?.schedule?.quickChecksSinceRecall ?? 0) + 1 >= QUICK_CHECK_LIMIT}
             blocked={ratingBlocked}
             problem={problemNotice}
-            resultHeading={answerHeading}
+            headingRef={answerHeading}
             onPick={pick}
             onContinue={() => void commit(null)}
           />
@@ -466,7 +503,24 @@ export function Practice() {
               <button type="submit" className="button button--primary button--large" disabled={phase === 'revealing'}>
                 Reveal answer <kbd aria-hidden="true">Space</kbd>
               </button>
+              {canShowOptions ? (
+                <button
+                  type="button"
+                  className="button button--quiet"
+                  onClick={() => void showOptions()}
+                  disabled={phase === 'revealing'}
+                  aria-describedby="show-options-hint"
+                >
+                  Show options
+                </button>
+              ) : null}
             </div>
+            {canShowOptions ? (
+              <p id="show-options-hint" className="field__hint practice__options-hint">
+                Drawing a blank? Pick from multiple choice instead. It’s saved as a quick check, which counts for less than
+                recall.
+              </p>
+            ) : null}
           </form>
         ) : (
           <>
@@ -556,6 +610,7 @@ export function Practice() {
 function QuickCheck({
   options,
   picked,
+  typed,
   correctOption,
   answer,
   source,
@@ -565,12 +620,14 @@ function QuickCheck({
   reachesLimit,
   blocked,
   problem,
-  resultHeading,
+  headingRef,
   onPick,
   onContinue,
 }: {
   options: string[];
   picked: number | null;
+  /** Anything typed before switching a full-recall card to its options. */
+  typed: string;
   correctOption: string | null;
   answer: string;
   source: string | null;
@@ -580,14 +637,15 @@ function QuickCheck({
   reachesLimit: boolean;
   blocked: boolean;
   problem: ReactNode;
-  resultHeading: RefObject<HTMLHeadingElement | null>;
+  /** Focused when the options appear after a switch, and when the result appears. */
+  headingRef: RefObject<HTMLHeadingElement | null>;
   onPick: (index: number) => void;
   onContinue: () => void;
 }) {
   if (picked === null) {
     return (
       <section className="choices" aria-labelledby="choices-title">
-        <h2 id="choices-title" className="choices__title">
+        <h2 id="choices-title" className="choices__title" ref={headingRef} tabIndex={-1}>
           Choose the best answer
         </h2>
         <p className="choices__hint muted">{MODE_DESCRIPTIONS['quick-check']}. Your first pick counts.</p>
@@ -622,7 +680,7 @@ function QuickCheck({
       <section className="choices" aria-labelledby="result-title">
         <h2
           id="result-title"
-          ref={resultHeading}
+          ref={headingRef}
           tabIndex={-1}
           className={`choices__result choices__result--${correct ? 'correct' : 'missed'}`}
         >
@@ -651,6 +709,15 @@ function QuickCheck({
           })}
         </ol>
       </section>
+
+      {typed.trim() ? (
+        <section className="practice__frozen" aria-labelledby="typed-title">
+          <h2 id="typed-title" className="eyebrow">
+            What you typed first
+          </h2>
+          <p className="practice__frozen-text">{typed}</p>
+        </section>
+      ) : null}
 
       <section className="practice__answer" aria-labelledby="answer-title">
         <h2 id="answer-title" className="eyebrow">
