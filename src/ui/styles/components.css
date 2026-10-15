@@ -728,6 +728,45 @@
   }
 }
 
+.choice-fields {
+  margin: 0.75rem 0 0;
+  padding: 1rem 1.25rem;
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--lime);
+  background: var(--bg);
+  min-width: 0;
+}
+
+.choice-fields.has-error {
+  border-left-color: var(--danger);
+}
+
+.choice-fields legend {
+  float: left;
+  width: 100%;
+  margin-bottom: 0.25rem;
+  padding: 0;
+}
+
+.choice-fields > * + * {
+  margin-top: 0.9rem;
+}
+
+.choice-fields > legend + * {
+  clear: both;
+  margin-top: 0;
+}
+
+.choice-fields__input {
+  field-sizing: content;
+  max-height: 12rem;
+}
+
+.card-preview__choices {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+
 .card-preview {
   margin-top: 0.75rem;
   padding: 1rem 1.25rem;

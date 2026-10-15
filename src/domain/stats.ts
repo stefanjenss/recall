@@ -1,5 +1,6 @@
 // Progress metrics derived only from committed, stored review events.
 
+import { canQuickCheck } from './choices';
 import { isActive, isDue, isNew } from './queue';
 import { currentStreak, dayKey, lastNDays } from './time';
 import type { Card, Confidence, Rating, Review, Schedule } from './types';
@@ -10,6 +11,8 @@ export interface TopicSummary {
   topic: string;
   cards: number;
   due: number;
+  /** Due cards that can be quick-checked now. */
+  quickCheckDue: number;
   newCards: number;
   paused: number;
 }
@@ -18,6 +21,12 @@ export interface TodaySummary {
   dueCount: number;
   dueEstablished: number;
   dueNew: number;
+  /** Due cards a quick check can take: they have options and are under the quick-check limit. */
+  dueQuickCheck: number;
+  /** Due cards with options that need a full recall first (quick-check limit reached). */
+  dueRecallOnly: number;
+  /** Due cards without options. */
+  dueNoOptions: number;
   reviewsToday: number;
   streak: number;
   collectionSize: number;
@@ -38,6 +47,9 @@ export function summarizeToday(
   let dueCount = 0;
   let dueEstablished = 0;
   let dueNew = 0;
+  let dueQuickCheck = 0;
+  let dueRecallOnly = 0;
+  let dueNoOptions = 0;
   let collectionSize = 0;
   let pausedCount = 0;
   let nextDueAt: number | null = null;
@@ -49,7 +61,7 @@ export function summarizeToday(
     collectionSize += 1;
     let t = topics.get(card.topic);
     if (!t) {
-      t = { topic: card.topic, cards: 0, due: 0, newCards: 0, paused: 0 };
+      t = { topic: card.topic, cards: 0, due: 0, quickCheckDue: 0, newCards: 0, paused: 0 };
       topics.set(card.topic, t);
     }
     t.cards += 1;
@@ -64,6 +76,11 @@ export function summarizeToday(
       t.due += 1;
       if (isNew(schedule)) dueNew += 1;
       else dueEstablished += 1;
+      if (canQuickCheck(card, schedule)) {
+        dueQuickCheck += 1;
+        t.quickCheckDue += 1;
+      } else if (card.choices) dueRecallOnly += 1;
+      else dueNoOptions += 1;
     } else if (nextDueAt === null || schedule.dueAt < nextDueAt) {
       nextDueAt = schedule.dueAt;
     }
@@ -76,6 +93,9 @@ export function summarizeToday(
     dueCount,
     dueEstablished,
     dueNew,
+    dueQuickCheck,
+    dueRecallOnly,
+    dueNoOptions,
     reviewsToday,
     streak: currentStreak(
       reviews.map((r) => r.committedAt),
@@ -112,7 +132,12 @@ export interface RatioStat {
 }
 
 export interface ProgressSummary {
+  /** Every committed review: full recalls and quick checks. */
   totalReviews: number;
+  /** Full-recall reviews, the only ones with a self-rating. */
+  recallReviews: number;
+  /** Quick checks answered correctly, out of all quick checks. */
+  quickChecks: RatioStat;
   reviewsToday: number;
   reviewsInWindow: number;
   activity: DayActivity[];
@@ -143,11 +168,19 @@ export function summarizeProgress(
   };
   let withoutConfidence = 0;
   let reviewsToday = 0;
+  let recallReviews = 0;
+  const quickChecks: RatioStat = { count: 0, total: 0 };
 
   for (const r of reviews) {
     const key = dayKey(r.committedAt, timeZone);
     if (counts.has(key)) counts.set(key, (counts.get(key) ?? 0) + 1);
     if (key === today) reviewsToday += 1;
+    if (r.mode === 'quick-check') {
+      quickChecks.total += 1;
+      if (r.quickCheck.correct) quickChecks.count += 1;
+      continue;
+    }
+    recallReviews += 1;
     ratingCounts[r.rating] += 1;
     if (r.confidence) {
       const c = calibration[r.confidence];
@@ -171,6 +204,8 @@ export function summarizeProgress(
   const activity = days.map((day) => ({ day, count: counts.get(day) ?? 0 }));
   return {
     totalReviews: reviews.length,
+    recallReviews,
+    quickChecks,
     reviewsToday,
     reviewsInWindow: activity.reduce((sum, d) => sum + d.count, 0),
     activity,
@@ -180,7 +215,7 @@ export function summarizeProgress(
       timeZone,
     ),
     ratingCounts,
-    goodOrEasy: { count: ratingCounts[3] + ratingCounts[4], total: reviews.length },
+    goodOrEasy: { count: ratingCounts[3] + ratingCounts[4], total: recallReviews },
     longIntervals: { count: longCount, total: activeCards },
     calibration,
     withoutConfidence,

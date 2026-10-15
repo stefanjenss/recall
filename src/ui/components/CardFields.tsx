@@ -1,7 +1,13 @@
 import { useId, useState, type ReactNode } from 'react';
-import { charCount, LIMITS, type CardField, type FieldError } from '../../domain/limits';
+import { charCount, LIMITS, MAX_DISTRACTORS, type CardField, type FieldError } from '../../domain/limits';
 import { CARD_KINDS, KIND_DESCRIPTIONS, KIND_LABELS, type CardContent } from '../../domain/types';
-import { CharCount, Markdown } from './common';
+import { CharCount, Markdown, OptionText } from './common';
+
+export interface ChoiceFormValues {
+  correct: string;
+  /** At least three fields; more only when imported content had more (validation then asks to remove some). */
+  distractors: string[];
+}
 
 export interface CardFormValues {
   topic: string;
@@ -9,20 +15,42 @@ export interface CardFormValues {
   answer: string;
   kind: string;
   source: string;
+  /** Left blank, the card has no options; validation turns blank options into `null`. */
+  choices: ChoiceFormValues;
 }
 
-export const EMPTY_CARD_FORM: CardFormValues = { topic: '', question: '', answer: '', kind: 'recall', source: '' };
+const blankDistractors = () => Array.from({ length: MAX_DISTRACTORS }, () => '');
+
+export const EMPTY_CARD_FORM: CardFormValues = {
+  topic: '',
+  question: '',
+  answer: '',
+  kind: 'recall',
+  source: '',
+  choices: { correct: '', distractors: blankDistractors() },
+};
 
 export function formValuesFrom(content: Partial<Record<keyof CardContent, unknown>>): CardFormValues {
   const s = (v: unknown) => (v === undefined || v === null ? '' : typeof v === 'string' ? v : String(v));
   const kind = s(content.kind).trim().toLowerCase();
+  const raw = content.choices;
+  const choices = raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+  const distractors = Array.isArray(choices.distractors) ? choices.distractors.map(s) : [];
   return {
     topic: s(content.topic),
     question: s(content.question),
     answer: s(content.answer),
     kind: kind || 'recall',
     source: s(content.source),
+    choices: {
+      correct: s(choices.correct),
+      distractors: [...distractors, ...blankDistractors()].slice(0, Math.max(MAX_DISTRACTORS, distractors.length)),
+    },
   };
+}
+
+function hasAnyChoice(c: ChoiceFormValues): boolean {
+  return c.correct.trim() !== '' || c.distractors.some((d) => d.trim() !== '');
 }
 
 export function CardFields({
@@ -40,9 +68,14 @@ export function CardFields({
 }) {
   const id = useId();
   const [preview, setPreview] = useState(false);
+  const [showChoices, setShowChoices] = useState(() => hasAnyChoice(values.choices));
   const errorFor = (field: CardField) => (showErrors ? errors.find((e) => e.field === field)?.message : undefined);
-  const set = (field: keyof CardFormValues) => (e: { target: { value: string } }) =>
+  const set = (field: Exclude<keyof CardFormValues, 'choices'>) => (e: { target: { value: string } }) =>
     onChange({ ...values, [field]: e.target.value });
+  const choiceErrors = showErrors ? errors.filter((e) => e.field === 'choices') : [];
+  const choicesOpen = showChoices || choiceErrors.length > 0;
+  const setChoices = (patch: Partial<ChoiceFormValues>) => onChange({ ...values, choices: { ...values.choices, ...patch } });
+  const choiceCount = hasAnyChoice(values.choices) ? 1 + values.choices.distractors.filter((d) => d.trim() !== '').length : 0;
   const knownKind = (CARD_KINDS as readonly string[]).includes(values.kind);
 
   const field = (
@@ -156,6 +189,57 @@ export function CardFields({
           value: values.source,
         },
       )}
+      <div className="card-fields__choices">
+        <button
+          type="button"
+          className="button button--quiet"
+          aria-expanded={choicesOpen}
+          aria-controls={`${id}-choices`}
+          onClick={() => setShowChoices((v) => !v)}
+        >
+          {choicesOpen ? 'Hide multiple-choice options' : 'Multiple-choice options'}
+          <span className="muted"> · {choiceCount > 0 ? `${choiceCount} options` : 'optional'}</span>
+        </button>
+        {choicesOpen ? (
+          <fieldset
+            id={`${id}-choices`}
+            className={`choice-fields${choiceErrors.length ? ' has-error' : ''}`}
+            aria-describedby={[`${id}-choices-hint`, choiceErrors.length ? `${id}-choices-error` : ''].filter(Boolean).join(' ')}
+          >
+            <legend className="field__label">Multiple-choice options</legend>
+            <p id={`${id}-choices-hint`} className="field__hint">
+              Used by Quick check. Give a one-line correct option and up to {MAX_DISTRACTORS} plausible wrong ones of a similar
+              length. Leave all blank to keep this card recall-only.
+            </p>
+            <ChoiceInput
+              id={`${id}-choice-correct`}
+              label="Correct option"
+              value={values.choices.correct}
+              invalid={choiceErrors.length > 0}
+              onChange={(correct) => setChoices({ correct })}
+            />
+            {values.choices.distractors.map((d, i) => (
+              <ChoiceInput
+                key={i}
+                id={`${id}-choice-wrong-${i}`}
+                label={`Wrong option ${i + 1}`}
+                value={d}
+                invalid={choiceErrors.length > 0}
+                onChange={(next) => setChoices({ distractors: values.choices.distractors.map((x, j) => (j === i ? next : x)) })}
+              />
+            ))}
+            {choiceErrors.length ? (
+              <div id={`${id}-choices-error`}>
+                {choiceErrors.map((e) => (
+                  <p key={e.message} className="field__error">
+                    {e.message}
+                  </p>
+                ))}
+              </div>
+            ) : null}
+          </fieldset>
+        ) : null}
+      </div>
       <div className="card-fields__preview">
         <button type="button" className="button button--quiet" aria-expanded={preview} onClick={() => setPreview((p) => !p)}>
           {preview ? 'Hide preview' : 'Preview formatting'}
@@ -174,9 +258,57 @@ export function CardFields({
             ) : (
               <p className="muted">Nothing yet.</p>
             )}
+            {choiceCount > 0 ? (
+              <>
+                <p className="eyebrow">Options</p>
+                <ul className="card-preview__choices">
+                  {[values.choices.correct, ...values.choices.distractors]
+                    .filter((o) => o.trim() !== '')
+                    .map((o, i) => (
+                      <li key={i}>
+                        <OptionText source={o.trim()} />
+                        {i === 0 && values.choices.correct.trim() ? <span className="muted"> (correct)</span> : null}
+                      </li>
+                    ))}
+                </ul>
+              </>
+            ) : null}
           </div>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+function ChoiceInput({
+  id,
+  label,
+  value,
+  invalid,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  invalid: boolean;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="field">
+      <div className="field__label-row">
+        <label htmlFor={id} className="field__label">
+          {label}
+        </label>
+        <CharCount count={charCount(value)} limit={LIMITS.choice} />
+      </div>
+      <textarea
+        id={id}
+        rows={2}
+        className="choice-fields__input"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        {...(invalid ? { 'aria-invalid': true as const } : {})}
+      />
     </div>
   );
 }

@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { buildQueue, ineligibility, type CardWithSchedule } from '../../src/domain/queue';
 import { initialSchedule } from '../../src/domain/scheduler';
-import type { Card } from '../../src/domain/types';
+import { canQuickCheck, sameChoices, shuffledOptions } from '../../src/domain/choices';
+import type { Card, CardChoices } from '../../src/domain/types';
+
+const CHOICES: CardChoices = { correct: 'right', distractors: ['wrong 1', 'wrong 2', 'wrong 3'] };
 
 const NOW = Date.UTC(2026, 9, 12, 18, 0, 0);
 const HOUR = 3_600_000;
@@ -9,7 +12,14 @@ const HOUR = 3_600_000;
 function item(
   id: string,
   topic: string,
-  opts: { dueAt?: number; reviewCount?: number; paused?: boolean; deleted?: boolean } = {},
+  opts: {
+    dueAt?: number;
+    reviewCount?: number;
+    paused?: boolean;
+    deleted?: boolean;
+    choices?: CardChoices | null;
+    quickChecks?: number;
+  } = {},
 ): CardWithSchedule {
   const card: Card = {
     id,
@@ -18,6 +28,7 @@ function item(
     answer: `A ${id}`,
     kind: 'recall',
     source: null,
+    choices: opts.choices ?? null,
     contentVersion: 1,
     createdAt: NOW - 100 * HOUR,
     updatedAt: NOW - 100 * HOUR,
@@ -29,6 +40,7 @@ function item(
     reviewCount: opts.reviewCount ?? 0,
     intervalDays: opts.reviewCount ? 3 : 0,
     paused: opts.paused ?? false,
+    quickChecksSinceRecall: opts.quickChecks ?? 0,
   };
   return { card, schedule };
 }
@@ -106,5 +118,49 @@ describe('ineligibility', () => {
     const f = item('f', 'A', { dueAt: NOW + HOUR });
     expect(ineligibility(f.card, f.schedule, NOW)).toBe('not-due');
     expect(ineligibility(undefined, undefined, NOW)).toBe('deleted');
+  });
+});
+
+describe('quick-check eligibility', () => {
+  it('a quick-check queue takes only due cards with options that are under the limit', () => {
+    const items = [
+      item('with-options', 'SQL', { choices: CHOICES }),
+      item('no-options', 'SQL'),
+      item('at-limit', 'SQL', { choices: CHOICES, quickChecks: 2 }),
+      item('one-used', 'Python', { choices: CHOICES, quickChecks: 1 }),
+      item('future', 'SQL', { choices: CHOICES, dueAt: NOW + HOUR }),
+    ];
+    expect(buildQueue(items, { now: NOW, size: 20, topics: null, mode: 'quick-check' }).sort()).toEqual([
+      'one-used',
+      'with-options',
+    ]);
+    expect(buildQueue(items, { now: NOW, size: 20, topics: null })).toHaveLength(4);
+  });
+
+  it('a card that loses its options or reaches the limit mid-session is recall-only', () => {
+    const atLimit = item('a', 'SQL', { choices: CHOICES, quickChecks: 2 });
+    expect(ineligibility(atLimit.card, atLimit.schedule, NOW, 'quick-check')).toBe('recall-only');
+    expect(ineligibility(atLimit.card, atLimit.schedule, NOW, 'recall')).toBeNull();
+    const plain = item('b', 'SQL');
+    expect(ineligibility(plain.card, plain.schedule, NOW, 'quick-check')).toBe('recall-only');
+    expect(canQuickCheck(item('c', 'SQL', { choices: CHOICES }).card, plain.schedule)).toBe(true);
+  });
+});
+
+describe('options', () => {
+  it('shuffles every option exactly once, driven by the supplied random function', () => {
+    const seq = [0.9, 0.1, 0.5];
+    let i = 0;
+    const shuffled = shuffledOptions(CHOICES, () => seq[i++ % seq.length]!);
+    expect([...shuffled].sort()).toEqual(['right', 'wrong 1', 'wrong 2', 'wrong 3']);
+    expect(shuffledOptions(CHOICES, () => 0.999)).toEqual(['right', 'wrong 1', 'wrong 2', 'wrong 3']);
+    expect(shuffledOptions(CHOICES, () => 0)).not.toEqual(['right', 'wrong 1', 'wrong 2', 'wrong 3']);
+  });
+
+  it('compares options by value and order', () => {
+    expect(sameChoices(CHOICES, { ...CHOICES, distractors: [...CHOICES.distractors] })).toBe(true);
+    expect(sameChoices(CHOICES, { ...CHOICES, distractors: ['wrong 2', 'wrong 1', 'wrong 3'] })).toBe(false);
+    expect(sameChoices(CHOICES, null)).toBe(false);
+    expect(sameChoices(null, null)).toBe(true);
   });
 });

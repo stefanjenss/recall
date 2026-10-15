@@ -1,5 +1,6 @@
+import { openDB } from 'idb';
 import { afterEach, describe, expect, it } from 'vitest';
-import { buildBackup, parseBackupText, validateBackup } from '../../src/content/backup';
+import { BACKUP_FORMAT_VERSION, buildBackup, parseBackupText, validateBackup } from '../../src/content/backup';
 import { STARTER_CARDS } from '../../src/content/starter';
 import { DAY_MS } from '../../src/domain/scheduler';
 import type { CardContent } from '../../src/domain/types';
@@ -25,7 +26,145 @@ const card = (question: string, topic = 'General'): CardContent => ({
   answer: `Answer to ${question}`,
   kind: 'recall',
   source: null,
+  choices: null,
 });
+
+// Records exactly as storage schema 1 / backup format 1 wrote them, before quick checks.
+const V1_CONTENT = { topic: 'SQL', question: 'Q1', answer: 'A1', kind: 'recall', source: null };
+const V1 = {
+  cards: [
+    { id: 'c1', ...V1_CONTENT, contentVersion: 1, createdAt: T0 - 5 * DAY_MS, updatedAt: T0 - 5 * DAY_MS, deletedAt: null },
+    {
+      id: 'c2',
+      ...V1_CONTENT,
+      question: 'Q2',
+      contentVersion: 1,
+      createdAt: T0 - 5 * DAY_MS,
+      updatedAt: T0 - 5 * DAY_MS,
+      deletedAt: null,
+    },
+  ],
+  schedules: [
+    {
+      cardId: 'c1',
+      dueAt: T0 - DAY_MS,
+      intervalDays: 1,
+      ease: 2.5,
+      reviewCount: 1,
+      lapseCount: 0,
+      paused: false,
+      schedulerVersion: 'recall-sm2-v1',
+      stateVersion: 1,
+      lastReviewedAt: T0 - 2 * DAY_MS,
+    },
+    {
+      cardId: 'c2',
+      dueAt: T0 - 5 * DAY_MS,
+      intervalDays: 0,
+      ease: 2.5,
+      reviewCount: 0,
+      lapseCount: 0,
+      paused: false,
+      schedulerVersion: 'recall-sm2-v1',
+      stateVersion: 0,
+      lastReviewedAt: null,
+    },
+  ],
+  reviews: [
+    {
+      id: 'r1',
+      cardId: 'c1',
+      cardVersion: 1,
+      sessionId: 's0',
+      response: 'my answer',
+      confidence: 'somewhat',
+      rating: 3,
+      before: { dueAt: T0 - 5 * DAY_MS, intervalDays: 0, ease: 2.5, reviewCount: 0, lapseCount: 0, stateVersion: 0 },
+      after: { dueAt: T0 - DAY_MS, intervalDays: 1, ease: 2.5, reviewCount: 1, lapseCount: 0, stateVersion: 1 },
+      schedulerVersion: 'recall-sm2-v1',
+      startedAt: T0 - 2 * DAY_MS,
+      revealedAt: T0 - 2 * DAY_MS,
+      committedAt: T0 - 2 * DAY_MS,
+      snapshot: V1_CONTENT,
+    },
+  ],
+  sessions: [
+    {
+      id: 's1',
+      topics: null,
+      size: 20,
+      queue: ['c1', 'c2'],
+      index: 0,
+      status: 'active',
+      startedAt: T0 - MIN,
+      endedAt: null,
+      attempt: {
+        id: 'att-1',
+        cardId: 'c1',
+        cardVersion: 1,
+        expectedStateVersion: 1,
+        response: 'draft',
+        confidence: null,
+        revealed: false,
+        startedAt: T0 - MIN,
+        revealedAt: null,
+      },
+      results: [],
+    },
+  ],
+};
+
+/** Create a database at storage schema 1, holding the V1 records. */
+async function seedVersion1Database(name: string): Promise<void> {
+  const db = await openDB(name, 1, {
+    upgrade(d) {
+      d.createObjectStore('cards', { keyPath: 'id' });
+      d.createObjectStore('schedules', { keyPath: 'cardId' });
+      const reviews = d.createObjectStore('reviews', { keyPath: 'id' });
+      reviews.createIndex('byCard', 'cardId');
+      reviews.createIndex('byCommittedAt', 'committedAt');
+      reviews.createIndex('bySession', 'sessionId');
+      d.createObjectStore('sessions', { keyPath: 'id' }).createIndex('byStatus', 'status');
+      d.createObjectStore('reflections', { keyPath: 'id' }).createIndex('byCreatedAt', 'createdAt');
+      d.createObjectStore('rubrics', { keyPath: 'id' }).createIndex('byCard', 'cardId');
+      d.createObjectStore('assessments', { keyPath: 'id' }).createIndex('byAttempt', 'attemptId');
+      d.createObjectStore('importBatches', { keyPath: 'id' });
+      d.createObjectStore('meta', { keyPath: 'key' });
+    },
+  });
+  const tx = db.transaction(['cards', 'schedules', 'reviews', 'sessions'], 'readwrite');
+  await Promise.all([
+    ...V1.cards.map((c) => tx.objectStore('cards').add(c)),
+    ...V1.schedules.map((sc) => tx.objectStore('schedules').add(sc)),
+    ...V1.reviews.map((r) => tx.objectStore('reviews').add(r)),
+    ...V1.sessions.map((se) => tx.objectStore('sessions').add(se)),
+  ]);
+  await tx.done;
+  db.close();
+}
+
+const withChoices = (question: string, topic = 'General'): CardContent => ({
+  ...card(question, topic),
+  choices: { correct: `Right: ${question}`, distractors: [`Wrong 1: ${question}`, `Wrong 2: ${question}`] },
+});
+
+async function quickState(repo: Repository, now = T0, size = 20): Promise<PracticeState> {
+  const result = await repo.startSession({ topics: null, size, now, mode: 'quick-check' });
+  if (result.status !== 'started') throw new Error(`expected started, got ${result.status}`);
+  return result.state;
+}
+
+/** Index of the correct option, or of a wrong one. */
+function optionIndex(state: PracticeState, correct: boolean): number {
+  const right = state.card!.choices!.correct;
+  return state.session.attempt!.options!.findIndex((o) => (o === right) === correct);
+}
+
+async function pickAndSave(repo: Repository, state: PracticeState, correct: boolean, now: number) {
+  const attempt = state.session.attempt!;
+  await repo.pickOption(state.session.id, attempt.id, optionIndex(state, correct), now);
+  return repo.commitQuickCheck(state.session.id, attempt.id, now);
+}
 
 async function startedState(repo: Repository, now = T0, size = 20): Promise<PracticeState> {
   const result = await repo.startSession({ topics: null, size, now });
@@ -335,6 +474,135 @@ describe('repository: sessions and reviews', () => {
   });
 });
 
+describe('repository: quick checks', () => {
+  it('quick-check sessions take only cards with options and freeze the shuffled order on the attempt', async () => {
+    const repo = freshRepo();
+    await repo.addCards([withChoices('Q1'), card('plain'), withChoices('Q2')], T0);
+    const state = await quickState(repo);
+    expect(state.session.mode).toBe('quick-check');
+    expect(state.session.queue).toHaveLength(2);
+    const options = state.session.attempt!.options!;
+    expect([...options].sort()).toEqual([state.card!.choices!.correct, ...state.card!.choices!.distractors].sort());
+    expect(state.session.attempt!.picked).toBeNull();
+
+    const reloaded = await repo.ensureAttempt(state.session.id, T0 + MIN);
+    expect(reloaded!.session.attempt!.id).toBe(state.session.attempt!.id);
+    expect(reloaded!.session.attempt!.options).toEqual(options);
+  });
+
+  it('AC23: a correct pick is frozen, saved once, and never lengthens the interval', async () => {
+    const repo = freshRepo();
+    await repo.addCards([withChoices('Q1')], T0);
+    const state = await quickState(repo);
+    const attempt = state.session.attempt!;
+    const right = optionIndex(state, true);
+    await repo.pickOption(state.session.id, attempt.id, right, T0 + MIN);
+    const repick = await repo.pickOption(state.session.id, attempt.id, optionIndex(state, false), T0 + MIN);
+    expect(repick!.session.attempt!.picked).toBe(right); // the first pick stands
+
+    const result = await repo.commitQuickCheck(state.session.id, attempt.id, T0 + 2 * MIN);
+    if (result.status !== 'committed') throw new Error(`expected commit, got ${result.status}`);
+    expect(result.review).toMatchObject({
+      mode: 'quick-check',
+      rating: null,
+      response: '',
+      quickCheck: { options: attempt.options, picked: right, correct: true },
+    });
+    expect(result.state.session.results[0]).toMatchObject({ outcome: 'reviewed', rating: null });
+
+    const retry = await repo.commitQuickCheck(state.session.id, attempt.id, T0 + 3 * MIN);
+    expect(retry.status).toBe('duplicate');
+    const ws = await repo.loadWorkspace();
+    expect(ws.reviews).toHaveLength(1);
+    expect(ws.schedules[0]).toMatchObject({
+      dueAt: T0 + 2 * MIN + DAY_MS,
+      intervalDays: 0,
+      ease: 2.5,
+      reviewCount: 0,
+      quickChecksSinceRecall: 1,
+      stateVersion: 1,
+    });
+  });
+
+  it('AC23: a missed quick check is applied as Again', async () => {
+    const repo = freshRepo();
+    await repo.addCards([withChoices('Q1')], T0);
+    const result = await pickAndSave(repo, await quickState(repo), false, T0);
+    if (result.status !== 'committed') throw new Error('expected commit');
+    expect(result.review.mode === 'quick-check' && result.review.quickCheck.correct).toBe(false);
+    const [s] = (await repo.loadWorkspace()).schedules;
+    expect(s).toMatchObject({ dueAt: T0 + 10 * MIN, ease: 2.3, reviewCount: 1, lapseCount: 1, quickChecksSinceRecall: 1 });
+  });
+
+  it('AC24: after two quick checks in a row a card needs a full recall, which resets the count', async () => {
+    const repo = freshRepo();
+    await repo.addCards([withChoices('Q1')], T0);
+    await pickAndSave(repo, await quickState(repo, T0), true, T0);
+    await pickAndSave(repo, await quickState(repo, T0 + DAY_MS), true, T0 + DAY_MS);
+    expect((await repo.loadWorkspace()).schedules[0]!.quickChecksSinceRecall).toBe(2);
+
+    const later = T0 + 3 * DAY_MS;
+    expect((await repo.startSession({ topics: null, size: 20, now: later, mode: 'quick-check' })).status).toBe('empty');
+    const recall = await startedState(repo, later);
+    const rated = await revealAndRate(repo, recall, 3, later);
+    if (rated.status !== 'committed') throw new Error('expected commit');
+    const [s] = (await repo.loadWorkspace()).schedules;
+    expect(s).toMatchObject({ quickChecksSinceRecall: 0, reviewCount: 1, intervalDays: 1 });
+    expect((await quickState(repo, later + 2 * DAY_MS)).session.queue).toHaveLength(1);
+  });
+
+  it('each mode refuses the other mode’s actions', async () => {
+    const repo = freshRepo();
+    await repo.addCards([withChoices('Q1')], T0);
+    const quick = await quickState(repo);
+    const qa = quick.session.attempt!;
+    await expect(repo.reveal(quick.session.id, qa.id, { response: 'x', confidence: null }, T0)).rejects.toThrow(/quick check/);
+    await expect(repo.commitQuickCheck(quick.session.id, qa.id, T0)).rejects.toThrow(/Pick an option/);
+    await expect(repo.pickOption(quick.session.id, qa.id, 7, T0)).rejects.toThrow(/Choose one of the options/);
+    await repo.pickOption(quick.session.id, qa.id, 0, T0);
+    await expect(repo.commitReview(quick.session.id, qa.id, 3, T0)).rejects.toThrow(/no self-rating/);
+    await repo.endSession(quick.session.id, T0);
+
+    const recall = await startedState(repo);
+    const ra = recall.session.attempt!;
+    expect(ra.options).toBeNull();
+    await expect(repo.pickOption(recall.session.id, ra.id, 0, T0)).rejects.toThrow(/full recall/);
+    await repo.reveal(recall.session.id, ra.id, { response: '', confidence: null }, T0);
+    await expect(repo.commitQuickCheck(recall.session.id, ra.id, T0)).rejects.toThrow(/full recall/);
+    expect((await repo.loadWorkspace()).reviews).toHaveLength(0);
+  });
+
+  it('editing options mid-attempt makes the pick stale; the fresh attempt uses the new options', async () => {
+    const repo = freshRepo();
+    await repo.addCards([withChoices('Q1')], T0);
+    const state = await quickState(repo);
+    const attempt = state.session.attempt!;
+    await repo.pickOption(state.session.id, attempt.id, optionIndex(state, true), T0);
+    const edited = { ...withChoices('Q1'), choices: { correct: 'New right', distractors: ['New wrong'] } };
+    await repo.updateCard(state.card!.id, edited, T0 + MIN);
+    const result = await repo.commitQuickCheck(state.session.id, attempt.id, T0 + MIN);
+    expect(result.status === 'stale' && result.reason).toBe('edited');
+    const fresh = await repo.refreshAttempt(state.session.id, attempt.id, T0 + MIN);
+    expect([...fresh!.session.attempt!.options!].sort()).toEqual(['New right', 'New wrong']);
+    expect(fresh!.session.attempt!.picked).toBeNull();
+  });
+
+  it('a queued card whose options are removed before its turn is skipped as recall-only', async () => {
+    const repo = freshRepo();
+    await repo.addCards([withChoices('Q1'), withChoices('Q2')], T0);
+    const state = await quickState(repo);
+    const second = state.session.queue[1]!;
+    await repo.updateCard(second, { ...withChoices('Q2'), choices: null }, T0);
+    const result = await pickAndSave(repo, state, true, T0);
+    if (result.status !== 'committed') throw new Error('expected commit');
+    expect(result.state.session.status).toBe('completed');
+    expect(result.state.session.results.map((r) => [r.outcome, r.reason])).toEqual([
+      ['reviewed', null],
+      ['skipped', 'recall-only'],
+    ]);
+  });
+});
+
 describe('repository: backups and deletion', () => {
   async function populated(): Promise<Repository> {
     const repo = freshRepo();
@@ -381,7 +649,7 @@ describe('repository: backups and deletion', () => {
     const before = await repo.exportWorkspace();
     const good = buildBackup(before, T0);
 
-    const future = validateBackup({ ...good, formatVersion: 2 });
+    const future = validateBackup({ ...good, formatVersion: BACKUP_FORMAT_VERSION + 1 });
     expect(future.ok).toBe(false);
     if (!future.ok) expect(future.errors[0]).toMatch(/newer than this app supports/);
 
@@ -403,6 +671,104 @@ describe('repository: backups and deletion', () => {
     expect(validateBackup({ format: 'recall-v1', cards: [] }).ok).toBe(false);
 
     expect(await repo.exportWorkspace()).toEqual(before);
+  });
+
+  it('AC12: backups carry options, quick-check reviews, and the quick-check counter', async () => {
+    const source = freshRepo();
+    await source.addCards([withChoices('Q1'), withChoices('Q2')], T0);
+    const state = await quickState(source);
+    await pickAndSave(source, state, false, T0 + MIN); // the second card stays mid-attempt
+    const data = await source.exportWorkspace();
+    expect(data.reviews[0]!.mode).toBe('quick-check');
+
+    const parsed = parseBackupText(JSON.stringify(buildBackup(data, T0 + 2 * MIN)));
+    if (!parsed.ok) throw new Error(parsed.errors.join('\n'));
+    const target = freshRepo();
+    await target.replaceWorkspace(parsed.data);
+    const restored = await target.exportWorkspace();
+    const byId = <T extends { id?: string; cardId?: string }>(xs: T[]) =>
+      [...xs].sort((a, b) => String(a.id ?? a.cardId).localeCompare(String(b.id ?? b.cardId)));
+    expect(byId(restored.cards)).toEqual(byId(data.cards));
+    expect(byId(restored.schedules)).toEqual(byId(data.schedules));
+    expect(restored.reviews).toEqual(data.reviews);
+    expect(restored.sessions).toEqual(data.sessions);
+  });
+
+  it('rejects malformed quick-check data in a backup', async () => {
+    const repo = freshRepo();
+    await repo.addCards([withChoices('Q1')], T0);
+    await pickAndSave(repo, await quickState(repo), true, T0);
+    const good = buildBackup(await repo.exportWorkspace(), T0);
+    expect(validateBackup(good).ok).toBe(true);
+
+    const bad = structuredClone(good) as unknown as {
+      data: { cards: Record<string, unknown>[]; schedules: Record<string, unknown>[]; reviews: Record<string, unknown>[] };
+    };
+    bad.data.cards[0]!.choices = { correct: 'Right', distractors: [] };
+    bad.data.schedules[0]!.quickChecksSinceRecall = 3;
+    bad.data.reviews[0]!.rating = 3;
+    const result = validateBackup(bad);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors.some((e) => e.includes('cards[0].choices.distractors'))).toBe(true);
+      expect(result.errors.some((e) => e.includes('schedules[0].quickChecksSinceRecall'))).toBe(true);
+      expect(result.errors.some((e) => e.includes('reviews[0].rating'))).toBe(true);
+    }
+  });
+
+  it('AC25: opening a version 1 database upgrades every record, and an attempt in progress still commits', async () => {
+    const name = `recall-v1-${Date.now()}-${counter++}`;
+    await seedVersion1Database(name);
+    const repo = createRepository(name);
+    repos.push(repo);
+
+    const ws = await repo.loadWorkspace();
+    expect(ws.cards.map((c) => c.choices)).toEqual([null, null]);
+    expect(ws.schedules.find((s) => s.cardId === 'c1')).toEqual({
+      ...V1.schedules[0],
+      schedulerVersion: 'recall-sm2-v2',
+      quickChecksSinceRecall: 0,
+    });
+    expect(ws.reviews[0]).toEqual({
+      ...V1.reviews[0],
+      mode: 'recall',
+      quickCheck: null,
+      snapshot: { ...V1.reviews[0]!.snapshot, choices: null },
+    });
+    expect(ws.reviews[0]!.schedulerVersion).toBe('recall-sm2-v1'); // history keeps the scheduler that computed it
+    expect(ws.activeSession).toMatchObject({ mode: 'recall', attempt: { id: 'att-1', options: null, picked: null } });
+
+    const state = (await repo.ensureAttempt('s1', T0))!;
+    expect(state.session.attempt!.id).toBe('att-1');
+    const result = await revealAndRate(repo, state, 3, T0);
+    expect(result.status).toBe('committed');
+  });
+
+  it('AC25: a version 1 backup is upgraded on restore and matches an upgraded version 1 database', async () => {
+    const name = `recall-v1-${Date.now()}-${counter++}`;
+    await seedVersion1Database(name);
+    const migrated = createRepository(name);
+    repos.push(migrated);
+    const fromDb = await migrated.exportWorkspace();
+
+    const v1Backup = {
+      format: 'recall-backup',
+      formatVersion: 1,
+      exportedAt: new Date(T0).toISOString(),
+      schedulerVersion: 'recall-sm2-v1',
+      data: { ...V1, reflections: [], rubrics: [], assessments: [], preferences: null },
+    };
+    const parsed = parseBackupText(JSON.stringify(v1Backup));
+    if (!parsed.ok) throw new Error(parsed.errors.join('\n'));
+    const target = freshRepo();
+    await target.replaceWorkspace(parsed.data);
+    const fromBackup = await target.exportWorkspace();
+    const byId = <T extends { id?: string; cardId?: string }>(xs: T[]) =>
+      [...xs].sort((a, b) => String(a.id ?? a.cardId).localeCompare(String(b.id ?? b.cardId)));
+    expect(byId(fromBackup.cards)).toEqual(byId(fromDb.cards));
+    expect(byId(fromBackup.schedules)).toEqual(byId(fromDb.schedules));
+    expect(fromBackup.reviews).toEqual(fromDb.reviews);
+    expect(fromBackup.sessions).toEqual(fromDb.sessions);
   });
 
   it('AC22: deleting all data returns to the fresh state', async () => {

@@ -76,6 +76,7 @@ test('AC11: edit keeps the schedule; pause, resume, and delete follow eligibilit
   await page.goto('./#/collection?status=paused');
   await page.locator('.card-row').first().click();
   await page.getByRole('button', { name: 'Resume card' }).click();
+  await expect(page.getByText('Card resumed.')).toBeVisible();
   await page.goto('./');
   await expect(page.getByRole('heading', { name: /6\s*cards due/ })).toBeVisible();
 
@@ -162,4 +163,50 @@ test('AC18: with AI unavailable the app says so plainly and study works', async 
   await expect(page.getByText(/Not configured\./)).toBeVisible();
   await page.goto('./#/method');
   await expect(page.getByText(/doesn’t grade your answers with AI/)).toBeVisible();
+});
+
+test('multiple-choice options can be written, imported, and edited; Today says which cards a quick check can take', async ({
+  page,
+}) => {
+  await page.goto('./#/add');
+  await page.getByLabel('Question').fill('Which SQL clause filters groups after aggregation?');
+  await page.getByLabel('Answer').fill('`HAVING` filters groups; `WHERE` filters rows before grouping.');
+  await page.getByRole('button', { name: /Multiple-choice options/ }).click();
+  await page.getByLabel('Correct option').fill('`HAVING`');
+  await page.getByLabel('Wrong option 1').fill('`WHERE`');
+  await page.getByLabel('Wrong option 2').fill('`GROUP BY`');
+  await page.getByRole('button', { name: 'Save card' }).click();
+  await expect(page.getByText('Card added.')).toBeVisible();
+
+  // Imported cards keep their options; bad options block the batch and name the problem.
+  await page.goto('./#/add/import');
+  const cards = [
+    { question: 'Plain card', answer: 'No options here.' },
+    { question: 'Too many', answer: 'A', choices: { correct: 'A', distractors: ['B', 'C', 'D', 'E'] } },
+    { question: 'Capital of France?', answer: 'Paris', choices: { correct: 'Paris', distractors: ['Lyon', 'Nice'] } },
+  ];
+  await page.getByLabel('Cards as JSON or tab-separated text').fill(JSON.stringify({ cards }));
+  await page.getByRole('button', { name: 'Preview import' }).click();
+  await expect(page.getByText('Use at most 3 wrong options; found 4.')).toBeVisible();
+  await expect(page.locator('.draft').nth(2)).toContainText('multiple choice');
+  await page.locator('.draft').nth(1).getByRole('button', { name: 'Remove' }).click();
+  await page.getByRole('button', { name: 'Add 2 cards' }).click();
+  await expect(page.getByText(/Added 2 cards/).first()).toBeVisible();
+
+  await page.goto('./');
+  await page.getByRole('radio', { name: /Quick check/ }).check();
+  await expect(page.getByText(/2 of 3 due cards can be quick-checked; 1 has no multiple-choice options/)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Start quick check · 2 cards' })).toBeEnabled();
+
+  // Editing: duplicate options are rejected; clearing them all makes the card recall-only.
+  await page.goto('./#/collection');
+  await page.locator('.card-row', { hasText: 'Capital of France' }).click();
+  await expect(page.getByLabel('Correct option')).toHaveValue('Paris');
+  await page.getByLabel('Wrong option 1').fill('paris');
+  await page.getByRole('button', { name: 'Save changes' }).click();
+  await expect(page.getByText('Each option must be different.')).toBeVisible();
+  for (const label of ['Correct option', 'Wrong option 1', 'Wrong option 2']) await page.getByLabel(label).fill('');
+  await page.getByRole('button', { name: 'Save changes' }).click();
+  await expect(page.getByText('Changes saved.')).toBeVisible();
+  await expect(page.getByText('No options')).toBeVisible();
 });

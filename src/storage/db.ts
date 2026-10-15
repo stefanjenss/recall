@@ -1,5 +1,6 @@
-import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
+import { openDB, type DBSchema, type IDBPDatabase, type IDBPTransaction, type StoreNames } from 'idb';
 import type { Assessment, Card, Reflection, Review, Rubric, Schedule, Session } from '../domain/types';
+import { upgradeCard, upgradeReview, upgradeSchedule, upgradeSession } from '../domain/upgrade';
 
 export const DB_NAME = 'recall';
 
@@ -7,7 +8,7 @@ export const DB_NAME = 'recall';
  * Storage schema version. Each bump adds a case to `upgrade` below; never
  * edit a past case. See docs/DATA.md for the history.
  */
-export const DB_VERSION = 1;
+export const DB_VERSION = 2;
 
 export interface ImportBatchRecord {
   id: string;
@@ -60,9 +61,26 @@ export interface OpenOptions {
   onVersionChange?: () => void;
 }
 
+type UpgradeTx = IDBPTransaction<RecallSchema, StoreNames<RecallSchema>[], 'versionchange'>;
+type Backfilled = 'cards' | 'schedules' | 'reviews' | 'sessions';
+
+/** Rewrite every record in a store. Only IDB requests are awaited, so the upgrade transaction stays open. */
+async function backfill<S extends Backfilled>(
+  tx: UpgradeTx,
+  store: S,
+  upgrade: (record: Record<string, unknown>) => Record<string, unknown>,
+): Promise<void> {
+  let cursor = await tx.objectStore(store).openCursor();
+  while (cursor) {
+    const record = cursor.value as unknown as Record<string, unknown>;
+    await cursor.update(upgrade(record) as unknown as RecallSchema[S]['value']);
+    cursor = await cursor.continue();
+  }
+}
+
 export function openRecallDb(name: string = DB_NAME, opts: OpenOptions = {}): Promise<RecallDb> {
   return openDB<RecallSchema>(name, DB_VERSION, {
-    upgrade(db, oldVersion) {
+    async upgrade(db, oldVersion, _newVersion, tx) {
       if (oldVersion < 1) {
         db.createObjectStore('cards', { keyPath: 'id' });
         db.createObjectStore('schedules', { keyPath: 'cardId' });
@@ -81,7 +99,17 @@ export function openRecallDb(name: string = DB_NAME, opts: OpenOptions = {}): Pr
         db.createObjectStore('importBatches', { keyPath: 'id' });
         db.createObjectStore('meta', { keyPath: 'key' });
       }
-      // Future migrations: `if (oldVersion < 2) { ... }`
+      if (oldVersion < 2) {
+        // Quick checks: optional card options, a quick-check counter on schedules,
+        // review and session modes, and recall-sm2-v2 (v1 rating rules unchanged).
+        await Promise.all([
+          backfill(tx, 'cards', upgradeCard),
+          backfill(tx, 'schedules', upgradeSchedule),
+          backfill(tx, 'reviews', upgradeReview),
+          backfill(tx, 'sessions', upgradeSession),
+        ]);
+      }
+      // Future migrations: `if (oldVersion < 3) { ... }`
     },
     blocking(_current, _next, event) {
       (event.target as IDBDatabase | null)?.close();

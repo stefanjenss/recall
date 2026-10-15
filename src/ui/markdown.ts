@@ -37,6 +37,15 @@ export function renderInlineMarkdown(source: string): string {
   return md.renderInline(source);
 }
 
+// Multiple-choice options are rendered inside buttons, so they get inline
+// formatting (code, emphasis) but never links.
+const mdOption = new MarkdownIt({ html: false, linkify: false, typographer: false });
+mdOption.disable(['image', 'link', 'autolink']);
+
+export function renderOptionMarkdown(source: string): string {
+  return mdOption.renderInline(source);
+}
+
 /** Plain-text excerpt for lists: strips the most common Markdown syntax. */
 export function plainExcerpt(source: string, max = 180): string {
   const text = source

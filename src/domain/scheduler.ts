@@ -1,5 +1,6 @@
-// recall-sm2-v1: an app-specific SM-2-inspired heuristic. It is not Anki's
+// recall-sm2-v2: an app-specific SM-2-inspired heuristic. It is not Anki's
 // algorithm and not FSRS. The rules are specified in docs/PRD.md section 8.
+// v2 keeps every v1 rating rule unchanged and adds the quick-check rule.
 //
 // Everything here is pure: callers supply the current time.
 
@@ -11,6 +12,10 @@ export const MAX_INTERVAL_DAYS = 3650;
 export const INITIAL_EASE = 2.5;
 export const MIN_EASE = 1.3;
 export const MAX_EASE = 3.5;
+/** Consecutive quick checks allowed before a card needs a full recall again. */
+export const QUICK_CHECK_LIMIT = 2;
+/** A correct quick check brings a card back in at most this many days. */
+export const QUICK_CHECK_MAX_DAYS = 2;
 
 export interface SchedulingState {
   intervalDays: number;
@@ -74,7 +79,37 @@ export function applyRating(schedule: Schedule, rating: Rating, now: number): Sc
     schedulerVersion: SCHEDULER_VERSION,
     stateVersion: schedule.stateVersion + 1,
     lastReviewedAt: now,
+    quickChecksSinceRecall: 0,
   };
+}
+
+/** Days until a card returns after a correct quick check: 1, or 2 once its interval is at least 2 days. */
+export function quickCheckDelayDays(intervalDays: number): number {
+  return Math.min(QUICK_CHECK_MAX_DAYS, Math.max(1, Math.floor(intervalDays)));
+}
+
+/**
+ * Apply a quick check (multiple choice) at `now`. Recognizing the answer is
+ * weaker evidence than recalling it, so a correct pick never grows the
+ * interval, changes ease, or counts as a review: it only brings the card back
+ * in 1–2 days. A wrong pick is a real miss and is applied exactly as Again.
+ */
+export function applyQuickCheck(schedule: Schedule, correct: boolean, now: number): Schedule {
+  const quickChecksSinceRecall = schedule.quickChecksSinceRecall + 1;
+  if (!correct) return { ...applyRating(schedule, 1, now), quickChecksSinceRecall };
+  return {
+    ...schedule,
+    dueAt: dueAtFor(quickCheckDelayDays(schedule.intervalDays), now),
+    schedulerVersion: SCHEDULER_VERSION,
+    stateVersion: schedule.stateVersion + 1,
+    lastReviewedAt: now,
+    quickChecksSinceRecall,
+  };
+}
+
+/** Days until the card is due after a quick check, from the same function used when committing. */
+export function previewQuickCheck(schedule: Schedule, correct: boolean, now: number): number {
+  return (applyQuickCheck(schedule, correct, now).dueAt - now) / DAY_MS;
 }
 
 export interface IntervalPreview {
@@ -103,6 +138,7 @@ export function initialSchedule(cardId: string, now: number): Schedule {
     schedulerVersion: SCHEDULER_VERSION,
     stateVersion: 0,
     lastReviewedAt: null,
+    quickChecksSinceRecall: 0,
   };
 }
 

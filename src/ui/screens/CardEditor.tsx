@@ -2,8 +2,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { useFlash } from '../../app/flash';
 import { href, navigate } from '../../app/router';
 import { useWorkspace } from '../../app/workspace';
+import { sameChoices } from '../../domain/choices';
 import { validateCardInput } from '../../domain/limits';
-import { formatInterval } from '../../domain/scheduler';
+import { formatInterval, QUICK_CHECK_LIMIT } from '../../domain/scheduler';
 import { formatDateTime } from '../../domain/time';
 import { CONFIDENCE_LABELS, RATING_LABELS, type Review } from '../../domain/types';
 import { CardFields, formValuesFrom, type CardFormValues } from '../components/CardFields';
@@ -56,13 +57,16 @@ export function CardEditor({ cardId }: { cardId: string }) {
   }
 
   const { value, errors } = validateCardInput(values);
+  // An invalid edit still counts as a change, so Save stays available and submitting shows what to fix.
   const dirty =
-    value !== null &&
-    (value.topic !== card.topic ||
-      value.question !== card.question ||
-      value.answer !== card.answer ||
-      value.kind !== card.kind ||
-      value.source !== card.source);
+    value === null
+      ? JSON.stringify(values) !== JSON.stringify(formValuesFrom(card))
+      : value.topic !== card.topic ||
+        value.question !== card.question ||
+        value.answer !== card.answer ||
+        value.kind !== card.kind ||
+        value.source !== card.source ||
+        !sameChoices(value.choices, card.choices);
   const changedElsewhere = card.contentVersion !== loadedVersion;
 
   async function save() {
@@ -190,6 +194,16 @@ export function CardEditor({ cardId }: { cardId: string }) {
                 <dd>{schedule.lapseCount}</dd>
               </div>
               <div>
+                <dt>Quick checks</dt>
+                <dd>
+                  {!card.choices
+                    ? 'No options'
+                    : schedule.quickChecksSinceRecall >= QUICK_CHECK_LIMIT
+                      ? 'Needs a full recall next'
+                      : `${schedule.quickChecksSinceRecall} of ${QUICK_CHECK_LIMIT} since last recall`}
+                </dd>
+              </div>
+              <div>
                 <dt>Scheduler</dt>
                 <dd>
                   <code>{schedule.schedulerVersion}</code>
@@ -234,7 +248,13 @@ export function CardEditor({ cardId }: { cardId: string }) {
                 <li key={r.id}>
                   <span>{formatDateTime(r.committedAt, tz, { year: 'numeric' })}</span>
                   <span>
-                    <strong>{RATING_LABELS[r.rating]}</strong>
+                    {r.mode === 'quick-check' ? (
+                      <>
+                        Quick check · <strong>{r.quickCheck.correct ? 'Correct' : 'Missed'}</strong>
+                      </>
+                    ) : (
+                      <strong>{RATING_LABELS[r.rating]}</strong>
+                    )}
                     {r.confidence ? ` · felt ${CONFIDENCE_LABELS[r.confidence].toLowerCase()}` : ''}
                     {r.cardVersion !== card.contentVersion ? ` · v${r.cardVersion}` : ''}
                   </span>

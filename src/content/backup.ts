@@ -1,14 +1,21 @@
-// Full backup format (recall-backup v1). Unlike the content export, a backup
+// Full backup format (recall-backup v2). Unlike the content export, a backup
 // carries schedules, review history, sessions, reflections, rubrics,
 // assessments, and preferences. It never contains secrets or runtime caches.
+//
+// Version history: v1 had no quick checks; v2 adds card options, the
+// quick-check counter, review and session modes, and recall-sm2-v2. Version 1
+// backups are upgraded on restore (see src/domain/upgrade.ts).
 
-import { BACKUP_MAX_BYTES, LIMITS } from '../domain/limits';
+import { BACKUP_MAX_BYTES, LIMITS, MAX_DISTRACTORS } from '../domain/limits';
+import { QUICK_CHECK_LIMIT } from '../domain/scheduler';
 import { isValidTimeZone } from '../domain/time';
 import {
   CARD_KINDS,
   CONFIDENCE_LEVELS,
+  PRACTICE_MODES,
   SCHEDULER_VERSION,
   SESSION_SIZES,
+  SKIP_REASONS,
   type Assessment,
   type Card,
   type Preferences,
@@ -18,9 +25,10 @@ import {
   type Schedule,
   type Session,
 } from '../domain/types';
+import { upgradeCard, upgradeReview, upgradeSchedule, upgradeSession } from '../domain/upgrade';
 
 export const BACKUP_FORMAT = 'recall-backup';
-export const BACKUP_FORMAT_VERSION = 1;
+export const BACKUP_FORMAT_VERSION = 2;
 
 export interface WorkspaceData {
   cards: Card[];
@@ -165,12 +173,28 @@ function sub(v: V, key: string, opts: { nullable?: boolean } = {}): V | null {
   return { e: v.e, path: `${v.path}.${key}`, o: x };
 }
 
+function checkChoices(v: V) {
+  const c = sub(v, 'choices', { nullable: true });
+  if (!c) return;
+  str(c, 'correct', { max: LIMITS.choice, nonEmpty: true });
+  const d = c.o.distractors;
+  if (
+    !Array.isArray(d) ||
+    d.length < 1 ||
+    d.length > MAX_DISTRACTORS ||
+    d.some((x) => typeof x !== 'string' || x.trim() === '' || [...x].length > LIMITS.choice)
+  ) {
+    c.e.add(`${c.path}.distractors must list 1–${MAX_DISTRACTORS} options of up to ${LIMITS.choice} characters each.`);
+  }
+}
+
 function checkContent(v: V) {
   str(v, 'topic', { max: LIMITS.topic });
   str(v, 'question', { max: LIMITS.question, nonEmpty: true });
   str(v, 'answer', { max: LIMITS.answer, nonEmpty: true });
   oneOf(v, 'kind', CARD_KINDS);
   str(v, 'source', { nullable: true, max: LIMITS.source });
+  checkChoices(v);
 }
 
 function checkCard(v: V) {
@@ -202,6 +226,7 @@ function checkSchedule(v: V) {
     );
   }
   num(v, 'lastReviewedAt', { nullable: true });
+  num(v, 'quickChecksSinceRecall', { int: true, min: 0, max: QUICK_CHECK_LIMIT });
 }
 
 function checkReview(v: V) {
@@ -211,7 +236,23 @@ function checkReview(v: V) {
   str(v, 'sessionId', { nullable: true });
   str(v, 'response', { max: LIMITS.response });
   oneOf(v, 'confidence', CONFIDENCE_LEVELS, { nullable: true });
-  oneOf(v, 'rating', [1, 2, 3, 4]);
+  oneOf(v, 'mode', PRACTICE_MODES);
+  if (v.o.mode === 'quick-check') {
+    oneOf(v, 'rating', [null]);
+    const q = sub(v, 'quickCheck');
+    if (q) {
+      const options = q.o.options;
+      if (!Array.isArray(options) || options.length < 2 || options.some((o) => typeof o !== 'string')) {
+        q.e.add(`${q.path}.options must be a list of at least two options.`);
+      } else {
+        num(q, 'picked', { int: true, min: 0, max: options.length - 1 });
+      }
+      bool(q, 'correct');
+    }
+  } else {
+    oneOf(v, 'rating', [1, 2, 3, 4]);
+    oneOf(v, 'quickCheck', [null]);
+  }
   checkSnapshot(sub(v, 'before'));
   checkSnapshot(sub(v, 'after'));
   str(v, 'schedulerVersion');
@@ -224,6 +265,7 @@ function checkReview(v: V) {
 
 function checkSession(v: V) {
   str(v, 'id', { nonEmpty: true });
+  oneOf(v, 'mode', PRACTICE_MODES);
   strArray(v, 'topics', { nullable: true });
   num(v, 'size', { int: true, min: 1 });
   strArray(v, 'queue');
@@ -242,6 +284,8 @@ function checkSession(v: V) {
     bool(a, 'revealed');
     num(a, 'startedAt');
     num(a, 'revealedAt', { nullable: true });
+    strArray(a, 'options', { nullable: true });
+    num(a, 'picked', { nullable: true, int: true, min: 0 });
   }
   if (!Array.isArray(v.o.results)) v.e.add(`${v.path}.results must be a list.`);
   else
@@ -252,7 +296,7 @@ function checkSession(v: V) {
       oneOf(rv, 'outcome', ['reviewed', 'skipped']);
       str(rv, 'reviewId', { nullable: true });
       oneOf(rv, 'rating', [1, 2, 3, 4], { nullable: true });
-      oneOf(rv, 'reason', ['deleted', 'paused', 'not-due', 'reviewed-elsewhere'], { nullable: true });
+      oneOf(rv, 'reason', SKIP_REASONS, { nullable: true });
       num(rv, 'at');
     });
 }
@@ -291,6 +335,23 @@ const CHECKERS: Record<CollectionName, (v: V) => void> = {
   assessments: checkWithId,
 };
 
+const V1_UPGRADES: Partial<Record<CollectionName, (record: Obj) => Obj>> = {
+  cards: upgradeCard,
+  schedules: upgradeSchedule,
+  reviews: upgradeReview,
+  sessions: upgradeSession,
+};
+
+/** Bring version 1 data to the current shape. Malformed entries are left for validation to report. */
+function upgradeV1Data(data: Obj): Obj {
+  const next: Obj = { ...data };
+  for (const [name, upgrade] of Object.entries(V1_UPGRADES)) {
+    const list = data[name];
+    if (Array.isArray(list)) next[name] = list.map((item) => (isObj(item) ? upgrade(item) : item));
+  }
+  return next;
+}
+
 /** Dry-run validation. Nothing is written until the learner confirms a valid result. */
 export function validateBackup(value: unknown): BackupValidation {
   const e = new Errors();
@@ -318,7 +379,7 @@ export function validateBackup(value: unknown): BackupValidation {
     };
   }
   if (!isObj(value.data)) return { ok: false, errors: ['The backup has no "data" object.'] };
-  const data = value.data;
+  const data = version < 2 ? upgradeV1Data(value.data) : value.data;
 
   for (const name of COLLECTIONS) {
     const list = data[name];

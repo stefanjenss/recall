@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { initialSchedule } from '../../src/domain/scheduler';
 import { nextDueFor, percent, summarizeProgress, summarizeToday } from '../../src/domain/stats';
-import type { Card, Confidence, Rating, Review, Schedule } from '../../src/domain/types';
+import type { Card, CardChoices, Confidence, Rating, Review, Schedule } from '../../src/domain/types';
 
 const NOW = Date.UTC(2026, 9, 12, 18, 0); // Oct 12, 14:00 in New York
 const DAY = 86_400_000;
@@ -15,6 +15,7 @@ function card(id: string, topic: string, deleted = false): Card {
     answer: 'a',
     kind: 'recall',
     source: null,
+    choices: null,
     contentVersion: 1,
     createdAt: 0,
     updatedAt: 0,
@@ -31,15 +32,22 @@ function review(i: number, committedAt: number, rating: Rating, confidence: Conf
     sessionId: null,
     response: '',
     confidence,
+    mode: 'recall',
     rating,
+    quickCheck: null,
     before: snap,
     after: snap,
     schedulerVersion: 'recall-sm2-v1',
     startedAt: committedAt,
     revealedAt: committedAt,
     committedAt,
-    snapshot: { topic: 'T', question: 'q', answer: 'a', kind: 'recall', source: null },
+    snapshot: { topic: 'T', question: 'q', answer: 'a', kind: 'recall', source: null, choices: null },
   };
+}
+
+function quickCheck(i: number, committedAt: number, correct: boolean): Review {
+  const base = review(i, committedAt, 3);
+  return { ...base, mode: 'quick-check', rating: null, quickCheck: { options: ['x', 'y'], picked: 0, correct } };
 }
 
 describe('summarizeToday', () => {
@@ -66,8 +74,8 @@ describe('summarizeToday', () => {
     });
     expect(s.nextDueAt).toBe(NOW + 2 * 3_600_000);
     expect(s.topics).toEqual([
-      { topic: 'Python', cards: 2, due: 0, newCards: 0, paused: 1 },
-      { topic: 'SQL', cards: 2, due: 2, newCards: 1, paused: 0 },
+      { topic: 'Python', cards: 2, due: 0, quickCheckDue: 0, newCards: 0, paused: 1 },
+      { topic: 'SQL', cards: 2, due: 2, quickCheckDue: 0, newCards: 1, paused: 0 },
     ]);
   });
 
@@ -112,5 +120,47 @@ describe('AC17: summarizeProgress', () => {
   it('shows no percentage without a denominator', () => {
     expect(percent({ count: 0, total: 0 })).toBe('—');
     expect(percent({ count: 1, total: 3 })).toBe('33%');
+  });
+});
+
+describe('quick checks in summaries', () => {
+  const CHOICES: CardChoices = { correct: 'r', distractors: ['w'] };
+
+  it('AC26: counts quick checks as reviews but keeps them out of self-ratings and calibration', () => {
+    const reviews = [
+      review(1, NOW - 60_000, 4, 'confident'),
+      review(2, NOW - DAY, 1),
+      quickCheck(3, NOW - 120_000, true),
+      quickCheck(4, NOW - 180_000, false),
+      quickCheck(5, NOW - DAY, true),
+    ];
+    const p = summarizeProgress([card('a', 'SQL')], new Map(), reviews, NOW, NY, 14);
+    expect(p.totalReviews).toBe(5);
+    expect(p.reviewsToday).toBe(3);
+    expect(p.recallReviews).toBe(2);
+    expect(p.quickChecks).toEqual({ count: 2, total: 3 });
+    expect(p.ratingCounts).toEqual({ 1: 1, 2: 0, 3: 0, 4: 1 });
+    expect(p.goodOrEasy).toEqual({ count: 1, total: 2 });
+    expect(p.calibration.confident).toEqual({ count: 1, total: 1 });
+    expect(p.withoutConfidence).toBe(1);
+  });
+
+  it('splits due cards by whether a quick check can take them', () => {
+    const cards = [
+      { ...card('ready', 'SQL'), choices: CHOICES },
+      { ...card('limit', 'SQL'), choices: CHOICES },
+      card('plain', 'Python'),
+    ];
+    const schedules = new Map<string, Schedule>([
+      ['ready', initialSchedule('ready', NOW - DAY)],
+      ['limit', { ...initialSchedule('limit', NOW - DAY), quickChecksSinceRecall: 2 }],
+      ['plain', initialSchedule('plain', NOW - DAY)],
+    ]);
+    const s = summarizeToday(cards, schedules, [], NOW, NY);
+    expect(s).toMatchObject({ dueCount: 3, dueQuickCheck: 1, dueRecallOnly: 1, dueNoOptions: 1 });
+    expect(s.topics.map((t) => [t.topic, t.quickCheckDue])).toEqual([
+      ['Python', 0],
+      ['SQL', 1],
+    ]);
   });
 });

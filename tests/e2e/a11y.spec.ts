@@ -1,6 +1,6 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
-import { freshWithStarterCards, noHorizontalScroll, startReview } from './helpers';
+import { freshWithStarterCards, noHorizontalScroll, startQuickCheck, startReview } from './helpers';
 
 const SCREENS = ['./', './#/collection', './#/add', './#/add/import', './#/progress', './#/method', './#/settings'];
 
@@ -22,6 +22,20 @@ test('automated WCAG checks pass on every screen and practice state', async ({ p
   await expectNoAxeViolations(page, 'practice: answering');
   await page.getByRole('button', { name: /Reveal answer/ }).click();
   await expectNoAxeViolations(page, 'practice: revealed');
+
+  await page.getByRole('button', { name: 'End session' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'End session' }).click();
+  await expect(page.getByRole('heading', { name: 'Session ended' })).toBeVisible();
+  await page.goto('./');
+  await startQuickCheck(page);
+  await expectNoAxeViolations(page, 'quick check: choosing');
+  await page.locator('button.choice').first().click();
+  await expect(page.getByRole('heading', { name: 'Full answer' })).toBeVisible();
+  await expectNoAxeViolations(page, 'quick check: result');
+
+  await page.goto('./#/add');
+  await page.getByRole('button', { name: /Multiple-choice options/ }).click();
+  await expectNoAxeViolations(page, 'add: options open');
 });
 
 test('AC14: content reflows at 320 CSS px (≈ 200% zoom of 640 px) without horizontal page scroll', async ({ browser }) => {
@@ -37,11 +51,25 @@ test('AC14: content reflows at 320 CSS px (≈ 200% zoom of 640 px) without hori
   await startReview(page);
   await noHorizontalScroll(page);
   await page.getByRole('button', { name: /Reveal answer/ }).click();
+  await expect(page.locator('.rating__button')).toHaveCount(4);
   await noHorizontalScroll(page);
   // Rating buttons fall into a 2×2 grid and stay at least 44 px tall.
   const boxes = await page.locator('.rating__button').evaluateAll((els) => els.map((e) => e.getBoundingClientRect().toJSON()));
   expect(new Set(boxes.map((b) => Math.round(b.top))).size).toBe(2);
   for (const b of boxes) expect(b.height).toBeGreaterThanOrEqual(44);
+
+  // Quick check: options and the result reflow too, and options stay at least 44 px tall.
+  await page.getByRole('button', { name: 'End session' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'End session' }).click();
+  await expect(page.getByRole('heading', { name: 'Session ended' })).toBeVisible();
+  await page.goto('./');
+  await startQuickCheck(page);
+  await noHorizontalScroll(page);
+  const options = await page.locator('button.choice').evaluateAll((els) => els.map((e) => e.getBoundingClientRect().toJSON()));
+  for (const b of options) expect(b.height).toBeGreaterThanOrEqual(44);
+  await page.locator('button.choice').first().click();
+  await expect(page.getByRole('heading', { name: 'Full answer' })).toBeVisible();
+  await noHorizontalScroll(page);
   await context.close();
 });
 

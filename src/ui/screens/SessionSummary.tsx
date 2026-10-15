@@ -3,10 +3,17 @@ import { useFlash } from '../../app/flash';
 import { href } from '../../app/router';
 import { useWorkspace } from '../../app/workspace';
 import { charCount, LIMITS } from '../../domain/limits';
-import { formatInterval } from '../../domain/scheduler';
+import { DAY_MS, formatInterval } from '../../domain/scheduler';
 import { summarizeToday } from '../../domain/stats';
 import { formatDateTime } from '../../domain/time';
-import { RATING_LABELS, RATINGS, type Session, type SkipReason } from '../../domain/types';
+import {
+  RATING_LABELS,
+  RATINGS,
+  type QuickCheckReview,
+  type RecallReview,
+  type Session,
+  type SkipReason,
+} from '../../domain/types';
 import { CharCount, Notice, PageHeader } from '../components/common';
 
 const SKIP_TEXT: Record<SkipReason, string> = {
@@ -14,6 +21,7 @@ const SKIP_TEXT: Record<SkipReason, string> = {
   paused: 'paused',
   'not-due': 'no longer due',
   'reviewed-elsewhere': 'reviewed elsewhere',
+  'recall-only': 'now needs a full recall',
 };
 
 export function SessionSummary({ sessionId }: { sessionId: string }) {
@@ -75,12 +83,17 @@ export function SessionSummary({ sessionId }: { sessionId: string }) {
     );
   }
 
-  const counts = Object.fromEntries(RATINGS.map((r) => [r, reviews.filter((x) => x.rating === r).length])) as Record<
+  const quick = session.mode === 'quick-check';
+  const recallReviews = reviews.filter((r): r is RecallReview => r.mode === 'recall');
+  const quickChecks = reviews.filter((r): r is QuickCheckReview => r.mode === 'quick-check');
+  const counts = Object.fromEntries(RATINGS.map((r) => [r, recallReviews.filter((x) => x.rating === r).length])) as Record<
     number,
     number
   >;
+  const correctCount = quickChecks.filter((r) => r.quickCheck.correct).length;
   const skipped = session.results.filter((r) => r.outcome === 'skipped');
-  const again = reviews.filter((r) => r.rating === 1);
+  // Rated Again, or missed in a quick check: both come back in 10 minutes.
+  const again = reviews.filter((r) => (r.mode === 'recall' ? r.rating === 1 : !r.quickCheck.correct));
   const remaining = session.queue.length - session.results.length;
   const ended = session.status === 'ended';
 
@@ -110,7 +123,13 @@ export function SessionSummary({ sessionId }: { sessionId: string }) {
         <h2 id="summary-title" className="due-figure">
           <span className="due-figure__number">{reviews.length}</span>
           <span className="due-figure__label">
-            {reviews.length === 1 ? 'card reviewed' : 'cards reviewed'}
+            {quick
+              ? reviews.length === 1
+                ? 'card quick-checked'
+                : 'cards quick-checked'
+              : reviews.length === 1
+                ? 'card reviewed'
+                : 'cards reviewed'}
             {session.topics ? ` · ${session.topics.join(', ')}` : ''}
           </span>
         </h2>
@@ -120,7 +139,34 @@ export function SessionSummary({ sessionId }: { sessionId: string }) {
           </p>
         ) : null}
 
-        {reviews.length > 0 ? (
+        {quick && quickChecks.length > 0 ? (
+          <>
+            <table className="table rating-summary">
+              <caption className="visually-hidden">Your quick-check results this session</caption>
+              <thead>
+                <tr>
+                  <th scope="col" className="num">
+                    Correct
+                  </th>
+                  <th scope="col" className="num">
+                    Missed
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td className="num">{correctCount}</td>
+                  <td className="num">{quickChecks.length - correctCount}</td>
+                </tr>
+              </tbody>
+            </table>
+            <p className="muted">
+              Quick checks test recognition, not recall. Correct picks bring cards back in a day or two without lengthening their
+              intervals.
+            </p>
+          </>
+        ) : null}
+        {!quick && recallReviews.length > 0 ? (
           <table className="table rating-summary">
             <caption className="visually-hidden">Your self-ratings this session</caption>
             <thead>
@@ -146,8 +192,8 @@ export function SessionSummary({ sessionId }: { sessionId: string }) {
 
         {again.length > 0 ? (
           <p>
-            {again.length} card{again.length === 1 ? '' : 's'} rated Again will be due in{' '}
-            {formatInterval(again[0]!.after.intervalDays)}
+            {again.length} card{again.length === 1 ? '' : 's'} {quick ? 'missed' : 'rated Again'} will be due in{' '}
+            {formatInterval((again[0]!.after.dueAt - again[0]!.committedAt) / DAY_MS)}
             {again.length === 1 ? ` (${formatDateTime(again[0]!.after.dueAt, tz)})` : ''}. They’ll appear in your next session,
             not this one.
           </p>

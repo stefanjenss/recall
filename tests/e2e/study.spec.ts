@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { cardPosition, freshWithStarterCards, startReview } from './helpers';
+import { cardPosition, freshWithStarterCards, startQuickCheck, startReview, storedPreference } from './helpers';
 
 test('AC01: a fresh install adds cards and completes a persisted session with no sign-in or AI', async ({ page }) => {
   await freshWithStarterCards(page);
@@ -83,6 +83,7 @@ test('AC08: refreshing mid-attempt restores the card, draft, confidence, reveal 
   await expect(cardPosition(page)).toContainText('Card 1 of 6');
 
   await page.getByRole('button', { name: /Reveal answer/ }).click();
+  await expect(page.getByRole('heading', { name: 'Answer', exact: true })).toBeVisible(); // shown once the reveal is saved
   await page.reload();
   await expect(page.getByRole('heading', { name: 'Answer', exact: true })).toBeVisible();
   await expect(page.getByText('A draft I do not want to lose')).toBeVisible();
@@ -166,8 +167,67 @@ test('the default session size preference applies after a reload', async ({ page
   await freshWithStarterCards(page);
   await page.goto('./#/settings');
   await page.getByRole('radio', { name: '5 cards' }).check();
+  await expect.poll(() => storedPreference(page, 'sessionSize')).toBe(5);
   await page.goto('./');
   await page.reload();
   await expect(page.getByRole('radio', { name: '5', exact: true })).toBeChecked();
   await expect(page.getByRole('button', { name: /Start review · 5 cards/ })).toBeVisible();
+});
+
+test('quick check: pick by click or 1–4, see the right answer and full explanation, continue, and get an honest summary', async ({
+  page,
+}) => {
+  await freshWithStarterCards(page);
+  await page.getByRole('radio', { name: /Quick check/ }).check();
+  await expect(page.getByText(/6 of 6 due cards can be quick-checked/)).toBeVisible();
+  await page.getByRole('radio', { name: '5' }).check();
+  await expect(page.getByRole('button', { name: 'Start quick check · 5 cards' })).toBeVisible();
+  await startQuickCheck(page);
+
+  for (let i = 1; i <= 5; i++) {
+    await expect(cardPosition(page)).toContainText(`Card ${i} of 5`);
+    await expect(page.getByRole('textbox', { name: 'Your answer' })).toHaveCount(0);
+    const options = page.locator('button.choice');
+    await expect(options).toHaveCount(4);
+    if (i % 2) {
+      await options.nth(1).click();
+    } else {
+      await page.locator('.practice__question').click();
+      await page.keyboard.press('2');
+    }
+    await expect(page.getByRole('heading', { name: /^(Correct|Not quite)$/ })).toBeVisible();
+    await expect(page.locator('.choice.is-correct')).toHaveCount(1);
+    await expect(page.locator('.choice.is-correct .choice__status')).toHaveText(/Correct answer|Your pick · correct/);
+    await expect(page.getByRole('heading', { name: 'Full answer' })).toBeVisible();
+    await expect(page.getByText(/Back in (1 day|10 min)\./)).toBeVisible();
+    await expect(page.getByRole('button', { name: /^Good/ })).toHaveCount(0); // no self-rating
+    if (i % 2) await page.getByRole('button', { name: /Continue/ }).click();
+    else await page.keyboard.press('Space');
+  }
+
+  await expect(page.getByRole('heading', { name: 'Session complete' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /5\s*cards quick-checked/ })).toBeVisible();
+  const [correct, missed] = (await page.locator('.rating-summary td').allTextContents()).map(Number);
+  expect(correct! + missed!).toBe(5);
+
+  await page.goto('./#/progress');
+  await expect(page.getByText(/picked correctly/)).toBeVisible();
+  await expect(page.getByText(`${correct} of 5 quick checks`)).toBeVisible();
+  await expect(page.getByText('incl. 5 quick checks')).toBeVisible();
+});
+
+test('refreshing after a quick-check pick restores the same options, pick, and result', async ({ page }) => {
+  await freshWithStarterCards(page);
+  await startQuickCheck(page);
+  const order = await page.locator('button.choice .choice__text').allInnerTexts();
+  await page.reload();
+  await expect(page.locator('button.choice .choice__text')).toHaveText(order);
+
+  await page.locator('button.choice').nth(2).click();
+  const result = await page.getByRole('heading', { name: /^(Correct|Not quite)$/ }).innerText();
+  await page.reload();
+  await expect(page.getByRole('heading', { name: /^(Correct|Not quite)$/ })).toHaveText(result);
+  await expect(page.locator('.choice--result .choice__text')).toHaveText(order);
+  await expect(page.locator('.choice--result').nth(2).locator('.choice__status')).toHaveText(/Your pick/);
+  await expect(cardPosition(page)).toContainText('Card 1 of 6');
 });
