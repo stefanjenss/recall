@@ -25,7 +25,7 @@ import {
   type Schedule,
   type Session,
 } from '../domain/types';
-import { upgradeCard, upgradeReview, upgradeSchedule, upgradeSession } from '../domain/upgrade';
+import { upgradeRecord } from '../domain/upgrade';
 
 export const BACKUP_FORMAT = 'recall-backup';
 export const BACKUP_FORMAT_VERSION = 2;
@@ -335,19 +335,24 @@ const CHECKERS: Record<CollectionName, (v: V) => void> = {
   assessments: checkWithId,
 };
 
-const V1_UPGRADES: Partial<Record<CollectionName, (record: Obj) => Obj>> = {
-  cards: upgradeCard,
-  schedules: upgradeSchedule,
-  reviews: upgradeReview,
-  sessions: upgradeSession,
-};
+export type RecordKind = CollectionName | 'preferences';
+
+/** Validate one record with the same rules a restore uses. Returns the problems found, or [] when valid. */
+export function validateRecord(kind: RecordKind, value: unknown): string[] {
+  if (!isObj(value)) return [`${kind} record must be an object.`];
+  const e = new Errors();
+  const v = { e, path: kind, o: value };
+  if (kind === 'preferences') checkPreferences(v);
+  else CHECKERS[kind](v);
+  return e.result();
+}
 
 /** Bring version 1 data to the current shape. Malformed entries are left for validation to report. */
 function upgradeV1Data(data: Obj): Obj {
   const next: Obj = { ...data };
-  for (const [name, upgrade] of Object.entries(V1_UPGRADES)) {
+  for (const name of COLLECTIONS) {
     const list = data[name];
-    if (Array.isArray(list)) next[name] = list.map((item) => (isObj(item) ? upgrade(item) : item));
+    if (Array.isArray(list)) next[name] = list.map((item) => upgradeRecord(name, item));
   }
   return next;
 }

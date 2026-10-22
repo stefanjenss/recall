@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { summarizeToday } from '../domain/stats';
+import { applyUpdate, useOffline } from '../offline/register';
 import { Notice, Wordmark } from '../ui/components/common';
 import { AddKnowledge } from '../ui/screens/AddKnowledge';
 import { CardEditor } from '../ui/screens/CardEditor';
@@ -12,6 +13,7 @@ import { Settings } from '../ui/screens/Settings';
 import { Today } from '../ui/screens/Today';
 import { FlashProvider, useFlash } from './flash';
 import { href, useRoute, type Route } from './router';
+import { needsReconnect, SyncProvider, useSync } from './sync';
 import { useWorkspace, WorkspaceProvider } from './workspace';
 
 type Destination = 'today' | 'collection' | 'add' | 'progress' | 'method' | 'settings' | 'practice';
@@ -68,6 +70,7 @@ function Shell() {
   const route = useRoute();
   const ws = useWorkspace();
   const { flash, clear } = useFlash();
+  const offline = useOffline();
   const [menuOpen, setMenuOpen] = useState(false);
   const current = destinationOf(route);
   const routeKey = window.location.hash || '#/';
@@ -160,7 +163,7 @@ function Shell() {
               </ul>
             </nav>
           ) : null}
-          <p className="sidebar__foot">Stored in this browser only.</p>
+          <SyncFoot />
         </div>
       </aside>
 
@@ -202,6 +205,16 @@ function Shell() {
             </button>
           </Notice>
         ) : null}
+        {offline.updateReady ? (
+          <div className="flash">
+            <Notice tone="info" title="A new version of Recall is ready">
+              <p>Reload to start using it. Your cards and review history stay as they are.</p>
+              <button type="button" className="button button--secondary" onClick={applyUpdate}>
+                Reload now
+              </button>
+            </Notice>
+          </div>
+        ) : null}
         {flash && flash.hash === routeKey ? (
           <div className="flash">
             <Notice key={flash.id} tone={flash.tone} onDismiss={clear}>
@@ -215,12 +228,37 @@ function Shell() {
   );
 }
 
+/** Where the data lives, and whether sync needs attention. */
+function SyncFoot() {
+  const { status, syncing } = useSync();
+  if (!status) return <p className="sidebar__foot">Stored in this browser only.</p>;
+  // "thinkcentre" from thinkcentre.tail1234.ts.net; IP addresses stay whole.
+  const { hostname, host: hostWithPort } = new URL(status.url);
+  const host = /^[\d.]+$|^\[/.test(hostname) ? hostWithPort : hostname.split('.')[0];
+  const problem = status.lastError && status.lastError.kind !== 'offline';
+  return (
+    <p className="sidebar__foot">
+      {syncing ? (
+        `Syncing with ${host}…`
+      ) : needsReconnect(status) || problem ? (
+        <a href={href('settings')}>Sync stopped. See Settings.</a>
+      ) : status.lastError ? (
+        `Saved here. Will sync with ${host} when it’s reachable.`
+      ) : (
+        `Synced with ${host}.`
+      )}
+    </p>
+  );
+}
+
 export function App() {
   return (
     <WorkspaceProvider>
-      <FlashProvider>
-        <Shell />
-      </FlashProvider>
+      <SyncProvider>
+        <FlashProvider>
+          <Shell />
+        </FlashProvider>
+      </SyncProvider>
     </WorkspaceProvider>
   );
 }

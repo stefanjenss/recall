@@ -2,7 +2,7 @@
 
 ## IndexedDB schema
 
-Database `recall`, schema version **2** (`src/storage/db.ts`). All timestamps are UTC milliseconds; intervals are days.
+Database `recall`, schema version **3** (`src/storage/db.ts`). All timestamps are UTC milliseconds; intervals are days.
 
 | Store           | Key                                      | Indexes                                | Holds                                                                                                                                                                                  |
 | --------------- | ---------------------------------------- | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -14,7 +14,8 @@ Database `recall`, schema version **2** (`src/storage/db.ts`). All timestamps ar
 | `rubrics`       | `id`                                     | `byCard`                               | Reserved for P1 grading (empty in P0)                                                                                                                                                  |
 | `assessments`   | `id`                                     | `byAttempt`                            | Reserved for P1 grading (empty in P0)                                                                                                                                                  |
 | `importBatches` | `id`                                     | —                                      | Import idempotency keys. A runtime cache, excluded from backups                                                                                                                        |
-| `meta`          | `key`                                    | —                                      | `preferences`, `lastBackupAt`                                                                                                                                                          |
+| `meta`          | `key`                                    | —                                      | `preferences`, `lastBackupAt`; while sync is connected, `syncConfig`, `syncState`, `syncClock` ([Sync](#sync))                                                                         |
+| `outbox`        | `id` (`<store>/<key>`)                   | —                                      | Records changed on this device that the sync server hasn't acknowledged yet. Written only while sync is connected                                                                      |
 
 Types are defined in `src/domain/types.ts`.
 
@@ -23,7 +24,8 @@ Types are defined in `src/domain/types.ts`.
 - Every card has exactly one schedule.
 - A review and its schedule transition are written in the same transaction. `reviewCount` on a schedule equals the
   number of full-recall reviews plus missed quick checks committed since the card was created or last reset. A correct
-  quick check doesn't count.
+  quick check doesn't count. With sync, one exception: if the same card is reviewed on two devices before they sync,
+  both reviews are kept but the schedule comes from the later one, so the count is one lower than the history.
 - `quickChecksSinceRecall` is at most 2. A full-recall review resets it to 0.
 - A review has `mode: 'recall'` with a rating 1–4 and `quickCheck: null`, or `mode: 'quick-check'` with
   `rating: null` and a `quickCheck` result.
@@ -37,13 +39,14 @@ Types are defined in `src/domain/types.ts`.
 schema change; never edit a released one. If another tab opens a newer schema, this tab's connection closes itself and
 the app asks the learner to reload.
 
-| Version | Change                                                                                                                                                                                                                                                                                                                                                                        |
-| ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1       | Initial schema                                                                                                                                                                                                                                                                                                                                                                |
-| 2       | Quick checks. No new stores or indexes; existing records are backfilled in the upgrade transaction: cards get `choices: null`; schedules get `quickChecksSinceRecall: 0` and move to `recall-sm2-v2`; reviews get `mode: 'recall'`, `quickCheck: null`, and `choices: null` in their snapshot; sessions get `mode: 'recall'` and attempts get `options: null`, `picked: null` |
+| Version | Change                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1       | Initial schema                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| 2       | `outbox` store for sync changes                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| 3       | Quick checks. No new stores or indexes; existing records are backfilled in the upgrade transaction: cards get `choices: null`; schedules get `quickChecksSinceRecall: 0` and move to `recall-sm2-v2`; reviews get `mode: 'recall'`, `quickCheck: null`, and `choices: null` in their snapshot; sessions get `mode: 'recall'` and attempts get `options: null`, `picked: null`. The upgrades aren't queued for sync: the sync server applies the same ones to its copy |
 
-The record upgrades live in `src/domain/upgrade.ts` and are shared with backup restore, so a version 1 database and a
-version 1 backup end up identical.
+The record upgrades live in `src/domain/upgrade.ts` and are shared with backup restore, sync, and the sync server, so a
+version 2 database, a version 1 backup, and an older server copy all end up identical.
 
 ### Scheduler versioning
 
@@ -84,7 +87,8 @@ Produced by Settings → Download full backup (`src/content/backup.ts`).
 }
 ```
 
-It contains no secrets, credentials, or runtime caches (`importBatches`, `lastBackupAt`).
+It contains no secrets, credentials, or runtime caches (`importBatches`, `lastBackupAt`, the sync settings, key, and
+outbox).
 
 | Format version | Change                                                                                                   |
 | -------------- | -------------------------------------------------------------------------------------------------------- |
@@ -103,7 +107,7 @@ It contains no secrets, credentials, or runtime caches (`importBatches`, `lastBa
 4. The learner sees record counts for the current workspace and for the backup, and can download a backup of the
    current data first.
 5. On confirmation, every store is cleared and repopulated in **one** transaction. A failure leaves the previous
-   workspace intact.
+   workspace intact. Restoring also disconnects sync on that device.
 
 ## Content export — `recall-v1`
 
@@ -155,3 +159,78 @@ Add knowledge → Import cards (`src/content/import.ts`).
 - **Idempotency:** each previewed batch gets a random ID. Committing records it in `importBatches` in the same
   transaction as the cards, so retrying or double-clicking returns "already imported" instead of adding the cards twice.
 - Imported cards start as new and due now.
+
+## Sync
+
+Optional sync with a server the learner runs; see [SYNC.md](SYNC.md) for setup and behavior. Code: `src/sync/`
+(shared, pure: clock, wire format, merge rules; plus the HTTP client and the sync pass), `src/app/sync.tsx` (when to
+sync), and `server/` (the server).
+
+### On the device
+
+Every repository write that changes a synced record also puts an entry in `outbox`, in the same transaction, stamped
+with the next clock value. A record changed many times has one entry, holding the latest stamp. Active sessions aren't
+queued; a session is queued when it completes or ends.
+
+| `meta` key   | Value                                                                                                 |
+| ------------ | ----------------------------------------------------------------------------------------------------- |
+| `syncConfig` | `{ url, key, deviceId, serverId, connectedAt }`. `deviceId` is new on every connection.               |
+| `syncState`  | `{ cursor, lastSyncAt, lastError: { kind, message, at } \| null, rejected: { count, lastReason } }`   |
+| `syncClock`  | `{ hlc, deviceId }`, the latest clock value issued or seen. Its presence is what turns the outbox on. |
+
+A sync pass pushes queued records in batches. Each batch is acknowledged, and records the server returns are applied, in
+one transaction. An outbox entry is removed only if its stamp hasn't changed since it was sent. The pass then pulls
+pages of changes since `cursor` and applies each page together with the new cursor. A pulled record is skipped if the
+outbox holds a newer local change to it.
+
+### Clock stamps
+
+`<ms, 15 digits>.<counter, at least 6 digits>.<deviceId>`, for example `001791820800000.000002.6f1c…`. Stamps
+compare by milliseconds, then counter, then device ID. A local change gets `max(now, last + 1)`. A pulled stamp
+advances `last`, so later local changes outrank it.
+
+### Wire format (protocol 2)
+
+All endpoints are under `api/sync/v2/` and need `Authorization: Bearer <key>`. Push and pull also send
+`X-Recall-Server: <serverId>`; a mismatch returns `409 server-changed`.
+
+| Endpoint     | Request                                                       | Response                                                                      |
+| ------------ | ------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `GET info`   | —                                                             | `{ app: "recall-sync", protocol: 2, serverId, serverTime, records, counts }`  |
+| `POST push`  | `{ deviceId, changes: [{ store, key, hlc, value }] }` (≤ 500) | `{ results: [{ store, key, hlc, status, reason?, record? }], serverTime }`    |
+| `GET pull`   | `?since=<seq>&limit=<n ≤ 2000>&device=<deviceId>`             | `{ changes: [{ store, key, hlc, value, seq }], cursor, more, serverTime }`    |
+| `POST reset` | `{ serverId }` (the current one)                              | The new `info`. The old data is saved to `backups/before-reset-*.json` first. |
+
+`GET /api/health` needs no key and returns `{ ok: true, app: "recall-sync" }`.
+
+`store` is one of `cards`, `schedules`, `reviews`, `sessions`, `reflections`, `rubrics`, `assessments`, or
+`preferences` (key `preferences`). `value` is the whole record as stored in IndexedDB. Push statuses are `applied`
+(stored as sent), `merged` (combined with the server's copy; `record` is the result), `kept` (the server's copy is
+newer; `record` is that copy), and `rejected` (invalid; `reason` says why). Changes are validated with the same checks
+as a backup restore. Active sessions, keys that don't match their record, and stamps more than a day ahead of the
+server's clock are refused. Pull leaves out rows that the asking device wrote as-is.
+
+| Protocol | Change                                                                                                                       |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| 1        | Initial protocol                                                                                                             |
+| 2        | Quick-check record shapes: card `choices`, schedule `quickChecksSinceRecall` and `recall-sm2-v2`, review and session `mode`. |
+
+The protocol version is part of the path, so a device and a server on different versions refuse each other before any
+record changes hands. A server answers requests for another version with `404 not-found` and a message telling the
+device to reload; a device that gets `404 not-found` from its own version's path reports that the server needs
+updating. Either way the device keeps its queued changes. Rejected records are never resent, so this matters: a server
+that couldn't read new record shapes would otherwise reject them for good. A device also upgrades any older-shaped
+record it pulls before storing it.
+
+### On the server
+
+`<RECALL_DATA_DIR>/recall-sync.sqlite`, schema version 2 (`PRAGMA user_version`), WAL mode. Version 2 rewrites
+stored records in the quick-check shape, in place and without new sequence numbers, using the same upgrades as
+devices.
+
+| Table      | Columns                                                                                                                                                                       |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `records`  | `store`, `key` (primary key), `seq` (unique, increasing across all writes), `hlc`, `value` (JSON), `origin` (device that wrote it as-is, or null after a merge), `updated_at` |
+| `settings` | `serverId`, `lastSeq`                                                                                                                                                         |
+
+Also in the data folder: `sync-key` (unless `RECALL_SYNC_KEY` is set) and `backups/`.

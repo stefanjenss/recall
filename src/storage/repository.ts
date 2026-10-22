@@ -3,14 +3,16 @@
 // whole change or none of it.
 
 import type { IDBPTransaction } from 'idb';
-import type { WorkspaceData } from '../content/backup';
+import { validateRecord, type WorkspaceData } from '../content/backup';
 import { sameChoices, shuffledOptions } from '../domain/choices';
 import { newId } from '../domain/ids';
 import { duplicateKey, LIMITS, overLimitMessage, validateCardInput } from '../domain/limits';
 import { buildQueue, ineligibility } from '../domain/queue';
 import { applyQuickCheck, applyRating, initialSchedule, snapshotOf } from '../domain/scheduler';
+import { upgradeRecord } from '../domain/upgrade';
 import { browserTimeZone, isValidTimeZone } from '../domain/time';
 import type {
+  Assessment,
   Attempt,
   Card,
   CardContent,
@@ -21,11 +23,15 @@ import type {
   Rating,
   Reflection,
   Review,
+  Rubric,
   Schedule,
   Session,
   SkipReason,
 } from '../domain/types';
-import { ALL_STORES, DB_NAME, openRecallDb, type RecallDb, type RecallSchema, type StoreName } from './db';
+import { compareHlc, hlcAt, isHlc, observeHlc, tickHlc } from '../sync/hlc';
+import type { SyncErrorKind } from '../sync/client';
+import { isSyncStore, keyOf, PREFERENCES_KEY, type SyncChange, type SyncRecord, type SyncStore } from '../sync/protocol';
+import { ALL_STORES, DB_NAME, openRecallDb, type OutboxEntry, type RecallDb, type RecallSchema, type StoreName } from './db';
 
 export function defaultPreferences(): Preferences {
   return {
@@ -47,6 +53,56 @@ export interface WorkspaceSnapshot {
   activeSession: Session | null;
   preferences: Preferences;
   lastBackupAt: number | null;
+}
+
+/** How to reach the sync server. Kept in this browser only; never in backups. */
+export interface SyncConfig {
+  /** Base URL of the server, ending in `/`. */
+  url: string;
+  key: string;
+  deviceId: string;
+  /** The server copy this device is synced with. */
+  serverId: string;
+  connectedAt: number;
+}
+
+export interface SyncState {
+  /** Server sequence number this device has pulled up to. */
+  cursor: number;
+  lastSyncAt: number | null;
+  lastError: { kind: SyncErrorKind; message: string; at: number } | null;
+  /** Changes the server refused. They stay on this device but stop being sent. */
+  rejected: { count: number; lastReason: string | null };
+}
+
+/** What screens need to show sync status. Leaves out the key. */
+export interface SyncStatus {
+  url: string;
+  serverId: string;
+  connectedAt: number;
+  cursor: number;
+  lastSyncAt: number | null;
+  lastError: SyncState['lastError'];
+  rejected: SyncState['rejected'];
+  /** Local changes not yet acknowledged by the server. */
+  pending: number;
+}
+
+interface SyncClock {
+  hlc: string;
+  deviceId: string;
+}
+
+/**
+ * How a device joins a server:
+ * - upload: queue every local record to send (the server is empty, or the learner chose to combine).
+ * - download: clear this device's data and take the server's copy.
+ */
+export type SyncJoinMode = 'upload' | 'download';
+
+export interface OutboxItem {
+  entry: OutboxEntry;
+  change: SyncChange;
 }
 
 export interface PracticeState {
@@ -72,8 +128,49 @@ type Tx<S extends StoreName[], M extends IDBTransactionMode> = IDBPTransaction<R
 type ReviewOutcome =
   { mode: 'recall'; rating: Rating; quickCheck: null } | { mode: 'quick-check'; rating: null; quickCheck: QuickCheckResult };
 
-const SESSION_STORES: ['cards', 'schedules', 'sessions'] = ['cards', 'schedules', 'sessions'];
+const SESSION_STORES: ['cards', 'schedules', 'sessions', 'meta', 'outbox'] = ['cards', 'schedules', 'sessions', 'meta', 'outbox'];
 type SessionTx = Tx<typeof SESSION_STORES, 'readwrite'>;
+type OutboxTx = Tx<['meta', 'outbox'], 'readwrite'>;
+
+const SYNC_DATA_STORES: ['cards', 'schedules', 'reviews', 'sessions', 'reflections', 'rubrics', 'assessments'] = [
+  'cards',
+  'schedules',
+  'reviews',
+  'sessions',
+  'reflections',
+  'rubrics',
+  'assessments',
+];
+type SyncDataStore = (typeof SYNC_DATA_STORES)[number];
+const SYNC_TX_STORES: [...typeof SYNC_DATA_STORES, 'meta', 'outbox'] = [...SYNC_DATA_STORES, 'meta', 'outbox'];
+
+/** The outbox key for a record. */
+export const outboxId = (store: SyncStore, key: string) => `${store}/${key}`;
+
+/** When a record last changed, as best it can tell. Used to stamp records a device uploads when it joins. */
+function changedAt(store: SyncStore, value: unknown): number {
+  const v = value as Record<string, unknown>;
+  const pick = (...fields: string[]) => {
+    for (const f of fields) if (typeof v[f] === 'number') return v[f] as number;
+    return 0;
+  };
+  switch (store) {
+    case 'cards':
+    case 'rubrics':
+      return pick('updatedAt', 'createdAt');
+    case 'schedules':
+      return pick('lastReviewedAt');
+    case 'reviews':
+      return pick('committedAt');
+    case 'sessions':
+      return pick('endedAt', 'startedAt');
+    case 'reflections':
+    case 'assessments':
+      return pick('createdAt');
+    case 'preferences':
+      return 0;
+  }
+}
 
 export interface RepositoryOptions {
   onVersionChange?: () => void;
@@ -103,6 +200,35 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
       }
       throw err;
     }
+  }
+
+  /**
+   * Queue records for sync, in the caller's transaction so the change and its
+   * outbox entry commit together. Does nothing while sync is off.
+   */
+  async function markChanged<S extends StoreName[]>(
+    anyTx: Tx<S, 'readwrite'>,
+    changes: Array<[SyncStore, string]>,
+    now: number,
+  ): Promise<void> {
+    if (changes.length === 0) return;
+    // The transaction must include 'meta' and 'outbox'.
+    const tx = anyTx as unknown as OutboxTx;
+    const meta = tx.objectStore('meta');
+    const clockRecord = await meta.get('syncClock');
+    if (!clockRecord) return;
+    const clock = clockRecord.value as SyncClock;
+    let hlc = clock.hlc;
+    for (const [store, key] of changes) {
+      hlc = tickHlc(hlc, now, clock.deviceId);
+      await tx.objectStore('outbox').put({ id: outboxId(store, key), store, key, hlc });
+    }
+    await meta.put({ key: 'syncClock', value: { ...clock, hlc } });
+  }
+
+  /** Session records sync once they finish; an active session stays on its device. */
+  async function markSession(tx: SessionTx, session: Session, now: number): Promise<void> {
+    if (session.status !== 'active') await markChanged(tx, [['sessions', session.id]], now);
   }
 
   // -------------------------------------------------------------------------
@@ -149,9 +275,240 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
     };
   }
 
-  async function savePreferences(prefs: Preferences): Promise<void> {
-    await run(['meta'], 'readwrite', async (tx) => {
+  async function savePreferences(prefs: Preferences, now: number): Promise<void> {
+    await run(['meta', 'outbox'], 'readwrite', async (tx) => {
       await tx.objectStore('meta').put({ key: 'preferences', value: prefs });
+      await markChanged(tx, [['preferences', PREFERENCES_KEY]], now);
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // Sync bookkeeping
+
+  async function getSyncConfig(): Promise<SyncConfig | null> {
+    const d = await db();
+    const rec = await d.get('meta', 'syncConfig');
+    return (rec?.value as SyncConfig | undefined) ?? null;
+  }
+
+  async function getSyncStatus(): Promise<SyncStatus | null> {
+    return run(['meta', 'outbox'], 'readonly', async (tx) => {
+      const [configRec, stateRec, pending] = await Promise.all([
+        tx.objectStore('meta').get('syncConfig'),
+        tx.objectStore('meta').get('syncState'),
+        tx.objectStore('outbox').count(),
+      ]);
+      if (!configRec) return null;
+      const config = configRec.value as SyncConfig;
+      const state = (stateRec?.value as SyncState | undefined) ?? emptySyncState();
+      return {
+        url: config.url,
+        serverId: config.serverId,
+        connectedAt: config.connectedAt,
+        cursor: state.cursor,
+        lastSyncAt: state.lastSyncAt,
+        lastError: state.lastError,
+        rejected: state.rejected,
+        pending,
+      };
+    });
+  }
+
+  function emptySyncState(): SyncState {
+    return { cursor: 0, lastSyncAt: null, lastError: null, rejected: { count: 0, lastReason: null } };
+  }
+
+  /**
+   * Connect this device to a sync server in one transaction. `upload` queues
+   * every existing record, stamped with when it last changed so that a newer
+   * copy already on the server wins. `download` clears this device's data so
+   * the first pull fills it with the server's copy.
+   */
+  async function connectSync(config: SyncConfig, mode: SyncJoinMode, now: number): Promise<void> {
+    await run(ALL_STORES, 'readwrite', async (tx) => {
+      const { deviceId } = config;
+      await tx.objectStore('outbox').clear();
+      if (mode === 'download') {
+        await Promise.all([
+          ...SYNC_DATA_STORES.map((name) => tx.objectStore(name).clear()),
+          tx.objectStore('importBatches').clear(),
+          tx.objectStore('meta').delete('preferences'),
+        ]);
+      }
+      await tx.objectStore('meta').put({ key: 'syncConfig', value: config });
+      await tx.objectStore('meta').put({ key: 'syncState', value: emptySyncState() });
+      const clock: SyncClock = { hlc: tickHlc(null, now, deviceId), deviceId };
+      await tx.objectStore('meta').put({ key: 'syncClock', value: clock });
+      if (mode !== 'upload') return;
+      const queue = (store: SyncStore, key: string, value: unknown) =>
+        tx.objectStore('outbox').put({ id: outboxId(store, key), store, key, hlc: hlcAt(changedAt(store, value), deviceId) });
+      const lists = await Promise.all(SYNC_DATA_STORES.map((name) => tx.objectStore(name).getAll()));
+      const writes: Array<Promise<unknown>> = [];
+      SYNC_DATA_STORES.forEach((store, i) => {
+        for (const value of lists[i]!) {
+          if (store === 'sessions' && (value as Session).status === 'active') continue;
+          const key = keyOf(store, value);
+          if (key) writes.push(queue(store, key, value));
+        }
+      });
+      const prefs = await tx.objectStore('meta').get('preferences');
+      if (prefs) writes.push(queue('preferences', PREFERENCES_KEY, prefs.value));
+      await Promise.all(writes);
+    });
+  }
+
+  /** Stop syncing. This device's data stays; so does the server's copy. */
+  async function disconnectSync(): Promise<void> {
+    await run(['meta', 'outbox'], 'readwrite', async (tx) => {
+      await Promise.all([
+        tx.objectStore('meta').delete('syncConfig'),
+        tx.objectStore('meta').delete('syncState'),
+        tx.objectStore('meta').delete('syncClock'),
+        tx.objectStore('outbox').clear(),
+      ]);
+    });
+  }
+
+  /**
+   * The oldest-keyed local changes waiting to sync, with each record's current
+   * value. Entries whose record is gone or can't sync are returned as `stale`
+   * so the caller can acknowledge them away.
+   */
+  async function readOutbox(limit: number): Promise<{ items: OutboxItem[]; stale: OutboxEntry[] }> {
+    return run(SYNC_TX_STORES, 'readonly', async (tx) => {
+      const entries = await tx.objectStore('outbox').getAll(undefined, limit);
+      const values = await Promise.all(
+        entries.map(async (entry) => {
+          if (entry.store === 'preferences') return (await tx.objectStore('meta').get('preferences'))?.value;
+          return tx.objectStore(entry.store).get(entry.key);
+        }),
+      );
+      const items: OutboxItem[] = [];
+      const stale: OutboxEntry[] = [];
+      entries.forEach((entry, i) => {
+        const value = values[i];
+        if (value === undefined || (entry.store === 'sessions' && (value as Session).status === 'active')) {
+          stale.push(entry);
+          return;
+        }
+        items.push({ entry, change: { store: entry.store, key: entry.key, hlc: entry.hlc, value } });
+      });
+      return { items, stale };
+    });
+  }
+
+  /**
+   * Record the outcome of a sync step in one transaction: drop acknowledged
+   * outbox entries (unless the record changed again meanwhile), apply records
+   * from the server (unless this device has a newer local change), advance the
+   * clock and the pull cursor. Does nothing if this device has since
+   * disconnected or switched servers.
+   */
+  async function applySyncBatch(batch: {
+    serverId: string;
+    acked?: Array<{ id: string; hlc: string }>;
+    records?: SyncRecord[];
+    cursor?: number;
+    rejected?: { count: number; lastReason: string | null };
+  }): Promise<{ applied: number; ignored: number; disconnected: boolean }> {
+    return run(SYNC_TX_STORES, 'readwrite', async (tx) => {
+      const meta = tx.objectStore('meta');
+      const outbox = tx.objectStore('outbox');
+      const [configRec, stateRec, clockRec] = await Promise.all([
+        meta.get('syncConfig'),
+        meta.get('syncState'),
+        meta.get('syncClock'),
+      ]);
+      const config = configRec?.value as SyncConfig | undefined;
+      if (!config || !clockRec || config.serverId !== batch.serverId) return { applied: 0, ignored: 0, disconnected: true };
+
+      for (const { id, hlc } of batch.acked ?? []) {
+        const entry = await outbox.get(id);
+        if (entry && entry.hlc === hlc) await outbox.delete(id);
+      }
+
+      let applied = 0;
+      let ignored = 0;
+      let clock = (clockRec.value as SyncClock).hlc;
+      for (const pulled of batch.records ?? []) {
+        // A server that predates quick checks may still hold records in the older shape.
+        const record = isSyncStore(pulled.store) ? { ...pulled, value: upgradeRecord(pulled.store, pulled.value) } : pulled;
+        const store = record.store;
+        if (
+          !isSyncStore(store) ||
+          validateRecord(store, record.value).length > 0 ||
+          keyOf(store, record.value) !== record.key ||
+          !isHlc(record.hlc)
+        ) {
+          ignored += 1;
+          continue;
+        }
+        clock = observeHlc(clock, record.hlc);
+        const id = outboxId(store, record.key);
+        const pending = await outbox.get(id);
+        if (pending && compareHlc(pending.hlc, record.hlc) > 0) continue;
+        if (store === 'sessions') {
+          const local = await tx.objectStore('sessions').get(record.key);
+          if ((record.value as Session).status === 'active' || local?.status === 'active') {
+            ignored += 1;
+            continue;
+          }
+        }
+        if (store === 'preferences') await meta.put({ key: 'preferences', value: record.value });
+        else await putSynced(tx, store, record.value);
+        if (pending) await outbox.delete(id);
+        applied += 1;
+      }
+
+      const state = (stateRec?.value as SyncState | undefined) ?? emptySyncState();
+      const next: SyncState = { ...state };
+      if (batch.cursor !== undefined) next.cursor = Math.max(state.cursor, batch.cursor);
+      if (batch.rejected && batch.rejected.count > 0) {
+        next.rejected = {
+          count: state.rejected.count + batch.rejected.count,
+          lastReason: batch.rejected.lastReason ?? state.rejected.lastReason,
+        };
+      }
+      await meta.put({ key: 'syncState', value: next });
+      await meta.put({ key: 'syncClock', value: { ...(clockRec.value as SyncClock), hlc: clock } });
+      return { applied, ignored, disconnected: false };
+    });
+  }
+
+  function putSynced(tx: Tx<typeof SYNC_TX_STORES, 'readwrite'>, store: SyncDataStore, value: unknown) {
+    switch (store) {
+      case 'cards':
+        return tx.objectStore('cards').put(value as Card);
+      case 'schedules':
+        return tx.objectStore('schedules').put(value as Schedule);
+      case 'reviews':
+        return tx.objectStore('reviews').put(value as Review);
+      case 'sessions':
+        return tx.objectStore('sessions').put(value as Session);
+      case 'reflections':
+        return tx.objectStore('reflections').put(value as Reflection);
+      case 'rubrics':
+        return tx.objectStore('rubrics').put(value as Rubric);
+      case 'assessments':
+        return tx.objectStore('assessments').put(value as Assessment);
+    }
+  }
+
+  /** Note when sync last succeeded or why it failed, for the current server only. */
+  async function recordSyncAttempt(
+    serverId: string,
+    outcome: { ok: true; at: number } | { ok: false; error: NonNullable<SyncState['lastError']> },
+  ): Promise<void> {
+    await run(['meta'], 'readwrite', async (tx) => {
+      const meta = tx.objectStore('meta');
+      const [configRec, stateRec] = await Promise.all([meta.get('syncConfig'), meta.get('syncState')]);
+      const config = configRec?.value as SyncConfig | undefined;
+      if (!config || config.serverId !== serverId) return;
+      const state = (stateRec?.value as SyncState | undefined) ?? emptySyncState();
+      const next: SyncState = outcome.ok
+        ? { ...state, lastSyncAt: outcome.at, lastError: null }
+        : { ...state, lastError: outcome.error };
+      await meta.put({ key: 'syncState', value: next });
     });
   }
 
@@ -180,7 +537,7 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
    */
   async function addCards(contents: CardContent[], now: number, batchId?: string): Promise<AddCardsResult> {
     const clean = contents.map(validated);
-    return run(['cards', 'schedules', 'importBatches'], 'readwrite', async (tx) => {
+    return run(['cards', 'schedules', 'importBatches', 'meta', 'outbox'], 'readwrite', async (tx) => {
       if (batchId) {
         const prior = await tx.objectStore('importBatches').get(batchId);
         if (prior) return { status: 'already-imported', cardIds: prior.cardIds };
@@ -193,17 +550,25 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
         cardIds.push(card.id);
       }
       if (batchId) await tx.objectStore('importBatches').add({ id: batchId, committedAt: now, cardIds });
+      await markChanged(tx, cardChanges(cardIds), now);
       return { status: 'added', cardIds };
     });
+  }
+
+  function cardChanges(cardIds: string[]): Array<[SyncStore, string]> {
+    return cardIds.flatMap((id): Array<[SyncStore, string]> => [
+      ['cards', id],
+      ['schedules', id],
+    ]);
   }
 
   /** Add only cards whose question isn't already in the collection (used for the starter set). */
   async function addMissingCards(contents: CardContent[], now: number): Promise<{ added: number; skipped: number }> {
     const clean = contents.map(validated);
-    return run(['cards', 'schedules'], 'readwrite', async (tx) => {
+    return run(['cards', 'schedules', 'meta', 'outbox'], 'readwrite', async (tx) => {
       const existing = await tx.objectStore('cards').getAll();
       const keys = new Set(existing.filter((c) => c.deletedAt === null).map((c) => duplicateKey(c.question)));
-      let added = 0;
+      const addedIds: string[] = [];
       for (const content of clean) {
         const k = duplicateKey(content.question);
         if (keys.has(k)) continue;
@@ -211,16 +576,17 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
         const card = newCard(content, now);
         await tx.objectStore('cards').add(card);
         await tx.objectStore('schedules').add(initialSchedule(card.id, now));
-        added += 1;
+        addedIds.push(card.id);
       }
-      return { added, skipped: clean.length - added };
+      await markChanged(tx, cardChanges(addedIds), now);
+      return { added: addedIds.length, skipped: clean.length - addedIds.length };
     });
   }
 
   /** Content edits keep the schedule and bump contentVersion. */
   async function updateCard(cardId: string, content: CardContent, now: number): Promise<Card> {
     const clean = validated(content);
-    return run(['cards'], 'readwrite', async (tx) => {
+    return run(['cards', 'meta', 'outbox'], 'readwrite', async (tx) => {
       const card = await tx.objectStore('cards').get(cardId);
       if (!card || card.deletedAt !== null) throw new ValidationError('This card no longer exists.');
       const changed =
@@ -233,35 +599,42 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
       if (!changed) return card;
       const next: Card = { ...card, ...clean, contentVersion: card.contentVersion + 1, updatedAt: now };
       await tx.objectStore('cards').put(next);
+      await markChanged(tx, [['cards', cardId]], now);
       return next;
     });
   }
 
-  async function mutateSchedule(cardId: string, fn: (s: Schedule) => Schedule): Promise<Schedule> {
-    return run(['schedules'], 'readwrite', async (tx) => {
+  async function mutateSchedule(cardId: string, now: number, fn: (s: Schedule) => Schedule): Promise<Schedule> {
+    return run(['schedules', 'meta', 'outbox'], 'readwrite', async (tx) => {
       const s = await tx.objectStore('schedules').get(cardId);
       if (!s) throw new ValidationError('This card has no schedule.');
       const next = { ...fn(s), stateVersion: s.stateVersion + 1 };
       await tx.objectStore('schedules').put(next);
+      await markChanged(tx, [['schedules', cardId]], now);
       return next;
     });
   }
 
   /** Pausing excludes a card from practice; resuming keeps its due time and history. */
-  function setPaused(cardId: string, paused: boolean): Promise<Schedule> {
-    return mutateSchedule(cardId, (s) => ({ ...s, paused }));
+  function setPaused(cardId: string, paused: boolean, now: number): Promise<Schedule> {
+    return mutateSchedule(cardId, now, (s) => ({ ...s, paused }));
   }
 
   /** Start the card over as new. Review history is kept. */
   function resetProgress(cardId: string, now: number): Promise<Schedule> {
-    return mutateSchedule(cardId, (s) => ({ ...initialSchedule(cardId, now), paused: s.paused, stateVersion: s.stateVersion }));
+    return mutateSchedule(cardId, now, (s) => ({
+      ...initialSchedule(cardId, now),
+      paused: s.paused,
+      stateVersion: s.stateVersion,
+    }));
   }
 
   async function deleteCard(cardId: string, now: number): Promise<void> {
-    await run(['cards'], 'readwrite', async (tx) => {
+    await run(['cards', 'meta', 'outbox'], 'readwrite', async (tx) => {
       const card = await tx.objectStore('cards').get(cardId);
       if (!card || card.deletedAt !== null) return;
       await tx.objectStore('cards').put({ ...card, deletedAt: now, updatedAt: now });
+      await markChanged(tx, [['cards', cardId]], now);
     });
   }
 
@@ -378,6 +751,7 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
       };
       const state = await advance(tx, session, opts.now);
       await tx.objectStore('sessions').add(session);
+      await markSession(tx, session, opts.now);
       return { status: 'started', state };
     });
   }
@@ -393,6 +767,7 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
       }
       const state = await advance(tx, session, now);
       await tx.objectStore('sessions').put(session);
+      await markSession(tx, session, now);
       return state;
     });
   }
@@ -491,7 +866,7 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
     now: number,
     settle: (attempt: Attempt, card: Card, schedule: Schedule) => { after: Schedule; outcome: ReviewOutcome },
   ): Promise<CommitResult> {
-    return run(['cards', 'schedules', 'sessions', 'reviews'], 'readwrite', async (tx) => {
+    return run(['cards', 'schedules', 'sessions', 'reviews', 'meta', 'outbox'], 'readwrite', async (tx) => {
       const sessionTx = tx as unknown as SessionTx;
       const existing = await tx.objectStore('reviews').get(attemptId);
       const session = await tx.objectStore('sessions').get(sessionId);
@@ -564,6 +939,15 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
       session.attempt = null;
       const next = await advance(sessionTx, session, now);
       await tx.objectStore('sessions').put(session);
+      await markChanged(
+        tx,
+        [
+          ['reviews', review.id],
+          ['schedules', card.id],
+        ],
+        now,
+      );
+      await markSession(sessionTx, session, now);
       return { status: 'committed', review, state: next };
     });
   }
@@ -603,6 +987,7 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
       skip(session, attempt.cardId, reason, now);
       const state = await advance(tx, session, now);
       await tx.objectStore('sessions').put(session);
+      await markSession(tx, session, now);
       return state;
     });
   }
@@ -624,6 +1009,7 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
         skip(session, attempt.cardId, reason ?? 'deleted', now);
         const state = await advance(tx, session, now);
         await tx.objectStore('sessions').put(session);
+        await markSession(tx, session, now);
         return state;
       }
       session.attempt = newAttempt(card, schedule, session.mode, now, attempt);
@@ -634,7 +1020,7 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
 
   /** End early. Nothing is rated on the learner's behalf. */
   async function endSession(sessionId: string, now: number): Promise<Session | null> {
-    return run(['sessions'], 'readwrite', async (tx) => {
+    return run(['sessions', 'meta', 'outbox'], 'readwrite', async (tx) => {
       const session = await tx.objectStore('sessions').get(sessionId);
       if (!session) return null;
       if (session.status === 'active') {
@@ -642,6 +1028,7 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
         session.endedAt = now;
         session.attempt = null;
         await tx.objectStore('sessions').put(session);
+        await markChanged(tx, [['sessions', session.id]], now);
       }
       return session;
     });
@@ -655,8 +1042,9 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
     const tooLong = overLimitMessage('Reflection', body, LIMITS.reflection);
     if (tooLong) throw new ValidationError(tooLong);
     const reflection: Reflection = { id: newId(), sessionId, body, createdAt: now };
-    await run(['reflections'], 'readwrite', async (tx) => {
+    await run(['reflections', 'meta', 'outbox'], 'readwrite', async (tx) => {
       await tx.objectStore('reflections').add(reflection);
+      await markChanged(tx, [['reflections', reflection.id]], now);
     });
     return reflection;
   }
@@ -736,6 +1124,13 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
     loadWorkspace,
     savePreferences,
     setLastBackupAt,
+    getSyncConfig,
+    getSyncStatus,
+    connectSync,
+    disconnectSync,
+    readOutbox,
+    applySyncBatch,
+    recordSyncAttempt,
     addCards,
     addMissingCards,
     updateCard,

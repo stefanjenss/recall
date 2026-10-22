@@ -250,9 +250,9 @@ describe('repository: cards', () => {
 
     // Pause excludes from practice; resume keeps the due time.
     const other = firstId === id1 ? id2 : id1;
-    const paused = await repo.setPaused(other, true);
+    const paused = await repo.setPaused(other, true, T0);
     expect((await repo.startSession({ topics: null, size: 20, now: T0 + MIN })).status).toBe('empty');
-    const resumed = await repo.setPaused(other, false);
+    const resumed = await repo.setPaused(other, false, T0);
     expect(resumed.dueAt).toBe(paused.dueAt);
     state = await startedState(repo, T0 + MIN);
     expect(state.session.queue).toEqual([other]);
@@ -403,7 +403,7 @@ describe('repository: sessions and reviews', () => {
     state = refreshed!;
     attempt = state.session.attempt!;
     await repo.reveal(state.session.id, attempt.id, { response: 'r', confidence: null }, T0);
-    await repo.setPaused(attempt.cardId, true);
+    await repo.setPaused(attempt.cardId, true, T0);
     expect(await repo.commitReview(state.session.id, attempt.id, 3, T0)).toMatchObject({
       status: 'ineligible',
       reason: 'paused',
@@ -427,7 +427,7 @@ describe('repository: sessions and reviews', () => {
     await repo.addCards([card('Q1', 'A'), card('Q2', 'B'), card('Q3', 'A')], T0);
     const state = await startedState(repo);
     const [, second, third] = state.session.queue as [string, string, string];
-    await repo.setPaused(second, true);
+    await repo.setPaused(second, true, T0);
     await repo.deleteCard(third, T0);
     const result = await revealAndRate(repo, state, 3, T0);
     if (result.status !== 'committed') throw new Error('expected commit');
@@ -610,14 +610,17 @@ describe('repository: backups and deletion', () => {
     const state = await startedState(repo);
     await revealAndRate(repo, state, 3, T0 + MIN);
     await repo.addReflection('Index trade-offs still feel shaky.', state.session.id, T0 + 2 * MIN);
-    await repo.savePreferences({
-      schemaVersion: 1,
-      timezone: 'Europe/Berlin',
-      readingSize: 'large',
-      sessionSize: 10,
-      aiMode: 'disabled',
-    });
-    await repo.setPaused(state.session.queue[2]!, true);
+    await repo.savePreferences(
+      {
+        schemaVersion: 1,
+        timezone: 'Europe/Berlin',
+        readingSize: 'large',
+        sessionSize: 10,
+        aiMode: 'disabled',
+      },
+      T0,
+    );
+    await repo.setPaused(state.session.queue[2]!, true, T0);
     return repo;
   }
 

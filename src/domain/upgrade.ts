@@ -48,3 +48,19 @@ export function upgradeSession(session: Rec): Rec {
     : session.attempt;
   return { ...session, mode: session.mode ?? 'recall', attempt };
 }
+
+const UPGRADES: Record<string, (record: Rec) => Rec> = {
+  cards: upgradeCard,
+  schedules: upgradeSchedule,
+  reviews: upgradeReview,
+  sessions: upgradeSession,
+};
+
+/**
+ * Upgrade one record of a named store (a backup collection or a sync store).
+ * Other stores, and values that aren't objects, pass through unchanged.
+ */
+export function upgradeRecord(store: string, value: unknown): unknown {
+  const upgrade = UPGRADES[store];
+  return upgrade && isRec(value) ? upgrade(value) : value;
+}

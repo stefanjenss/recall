@@ -14,7 +14,8 @@ import {
   type PracticeMode,
   type SessionSize,
 } from '../../domain/types';
-import { backupIsStale, downloadFullBackup } from '../backupActions';
+import { useSync } from '../../app/sync';
+import { BACKUP_REMINDER_DAYS, backupIsStale, downloadFullBackup } from '../backupActions';
 import { Notice, PageHeader, Segmented, StatList } from '../components/common';
 import { LEARNING_NOTES } from './Method';
 
@@ -31,6 +32,7 @@ function quickCheckUnavailable(topic: string | null): string {
 
 export function Today() {
   const ws = useWorkspace();
+  const sync = useSync();
   const { show } = useFlash();
   const tz = ws.preferences.timezone;
   const [topic, setTopic] = useState<string>(ALL);
@@ -315,10 +317,12 @@ export function Today() {
         />
       ) : null}
 
-      {backupIsStale(ws) ? (
+      {backupIsStale(ws) && !recentlySynced(sync.status?.lastSyncAt ?? null, ws.now) ? (
         <Notice tone="warn" title="Back up your cards" live={false}>
           <p>
-            Your collection lives only in this browser.{' '}
+            {sync.status
+              ? 'This device hasn’t synced with your server recently, so its latest changes may exist only here.'
+              : 'Your collection lives only in this browser.'}{' '}
             {ws.lastBackupAt ? `Last backup ${formatDateTime(ws.lastBackupAt, tz)}.` : 'You haven’t made a backup yet.'}
           </p>
           <div className="button-row">
@@ -396,4 +400,9 @@ export function Today() {
       </aside>
     </div>
   );
+}
+
+/** A recent sync means the server holds a copy, so the backup reminder can rest. */
+function recentlySynced(lastSyncAt: number | null, now: number): boolean {
+  return lastSyncAt !== null && now - lastSyncAt < BACKUP_REMINDER_DAYS * 86_400_000;
 }

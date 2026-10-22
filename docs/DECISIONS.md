@@ -94,6 +94,12 @@ usable only once or twice in a row. PRD §7 and §8 have the spec; these are the
 - **Scheduler version.** The rating rules didn't change, but due times no longer always equal last review plus
   interval, and schedules gained a counter, so this is `recall-sm2-v2` with a relabel-only migration, per the project
   rule. `Review.schedulerVersion` is typed as a string because older reviews correctly keep `recall-sm2-v1`.
+- **Sync.** Quick checks change record shapes that the sync server validates, and the sync design never resends a
+  record the server rejected. A server without quick-check support would reject new schedules and quick-check reviews
+  for good. So the sync protocol moved to 2, and the version is in the API path: a device and a server on different
+  versions refuse each other's requests before any record moves, with a message saying what to update, and the device
+  keeps its changes. The server's SQLite migration and devices' pulls apply the same record upgrades as IndexedDB and
+  backup restore. Storage became schema 3, since sync had already taken schema 2 for its outbox.
 - **Metrics.** Quick checks count toward activity, totals, and the streak (they are practice), and are reported on their
   own line in Progress. They are excluded from the self-rated Good/Easy share and the confidence table.
 
@@ -125,9 +131,87 @@ Changes made because of these measurements: restores queue all inserts at once i
 lookups are cached in 15-minute buckets; review history is read in its own transaction so it never delays session
 writes; and Practice refreshes the workspace only after its first card is on screen.
 
+## Hosting and offline
+
+- **GitHub Pages**, deployed by `.github/workflows/deploy.yml` on every push to `main` after `npm run check` passes. The
+  app is static and the data lives in each browser, so it needs no server of its own. The home server (the owner's
+  Ubuntu box with Docker and Tailscale) runs the optional sync server (see [Sync](#sync)) and is the planned place for
+  any P1 inference service.
+- **A hand-written service worker** instead of `vite-plugin-pwa`/Workbox. It's about 60 lines, adds no dependencies, and
+  does one thing. A small Vite plugin in `vite.config.ts` writes `dist/sw.js` after each build, listing every output file
+  (except legacy `.woff` fonts; every browser with service workers uses `.woff2`) and a version hash of their contents.
+- **Precache everything, serve cache-first, update on request.** Each build gets its own cache (`recall-<hash>`).
+  Install fetches with `cache: 'reload'` so a new version never stores a stale `index.html` from the HTTP cache. A new
+  worker waits until the learner clicks **Reload now**. Swapping versions on its own could change the app in the middle
+  of a session. Old caches are deleted on activation.
+- **`index.html` is cache-first too, not network-first.** Network-first would make every load wait on the host, and on
+  a phone whose home server is asleep or whose Tailscale link is half up that wait can last until a timeout. It would
+  also mix a new `index.html` with the old worker's cached files. A cache-first shell isn't stale for long: the browser
+  checks `sw.js` on every load, bypassing the HTTP cache, and the app checks again when it comes back to the
+  foreground after 30 minutes.
+- **Only the app's own files go through the worker.** It answers navigations (always `index.html`, since routing is by
+  hash) and files in this build's precache list. Everything else goes to the network untouched, including other
+  origins and the sync server's API (`api/` next to the app, or `/api/` at the root). Opening `/api/health` in a tab
+  still reaches the server rather than the cached app.
+- **Secure contexts only.** Browsers allow service workers only on HTTPS and `localhost`, so a plain-HTTP address
+  (such as a tailnet IP without Tailscale Serve) works online but not offline. Settings says so instead of blaming the
+  browser.
+- **`ignoreVary` on cache lookups.** Some servers send `Vary: Origin`, and Vite's module script and stylesheet tags
+  are requested with an `Origin` header the precache requests didn't have. Without it, offline loads failed. The
+  end-to-end test caught this.
+- Registered only in production builds, so `npm run dev` is never served stale code.
+
+## Sync
+
+Added after P0 as the PRD's P2 "sync across devices", scoped to one person with their own server. Setup and behavior
+are in [SYNC.md](SYNC.md), formats in [DATA.md](DATA.md#sync). The PRD asks that a server-backed scope change document
+authentication, storage, backups, running cost, and the reason; those are covered here and in SYNC.md.
+
+- **Why a self-hosted server.** The goal is one person's phone and laptop sharing one collection, and the learner
+  already runs a home server. A server they own keeps the "nothing goes to anyone else" promise, has no hosting cost
+  beyond the machine that's already on, and needs no accounts. Hosted multi-user sync stays out of scope.
+- **Offline first.** IndexedDB remains the source of truth on each device; the app works the same with the server
+  down. Sync copies records between full replicas instead of moving storage to the server.
+- **Record-level last-writer-wins, decided by the server.** Each record travels whole with a hybrid logical clock stamp.
+  The server applies a few pure rules (`src/sync/merge.ts`): the later stamp wins, reviews never change once stored, and
+  a delete beats a concurrent edit. Devices accept whatever the server stores unless they hold a newer local change.
+  The server is the single place conflicts are resolved, so devices converge even when the rules combine fields. That
+  rules out per-field merging (for example, a pause on one device and a review on another: the later schedule wins
+  whole). For one person, conflicting edits need two devices changing the same card while one is offline, so whole
+  records are an acceptable trade for a much simpler design.
+- **Hybrid logical clock, not plain timestamps.** Wall clocks on two devices can differ by seconds. The HLC makes any
+  change made after seeing another device's change sort later, regardless of skew. The server refuses stamps more than a
+  day ahead of its clock, so a device with a badly wrong date can't override everything.
+- **Outbox in the same transaction.** Every repository write that changes a synced record also queues it in `outbox`
+  in the same IndexedDB transaction, so a crash can't lose a change or sync a change that didn't commit. All writes
+  already go through `repository.ts`, so this needed no changes in screens. The outbox is only written while connected;
+  connecting queues every existing record, stamped with when it last changed.
+- **Active sessions stay local.** A session in progress holds a draft and a queue built on one device; syncing it would
+  mean two devices sharing one "active session" and breaking the at-most-one-active rule. Reviews sync as they happen;
+  the session record follows when it ends.
+- **Pull by sequence number, without echoes.** Every write on the server gets the next sequence number, so a device
+  pulls "everything since N" and never misses a change. Rows remember which device wrote them as-is; that device isn't
+  sent them back, which keeps a first upload of a large collection from downloading it all again. Because of this, a
+  device gets a fresh ID on every connection.
+- **Joining is explicit.** When both the device and the server have data, the learner chooses: take the server's copy
+  (the usual way to add a device), combine, or replace the server's copy. Replacing makes the server save a JSON backup
+  first and changes its ID, so other devices stop and ask to reconnect rather than silently mixing old and new data.
+  Restoring a backup on a device disconnects it for the same reason.
+- **Server stack.** Node's built-in `node:sqlite` and `node:http`, bundled with Vite into one file with no runtime
+  dependencies, so the home server needs only Node 22.13+ or Docker. `node:sqlite` still prints an experimental
+  warning; it's stable enough for a single-user store and is suppressed in the provided start commands. The server
+  reuses `src/content/backup.ts` to validate every incoming record and to write backups in the format the app restores.
+- **Auth.** One random 256-bit key, compared in constant time and sent only in a header. That's enough for a
+  single-user server reachable only on a private tailnet. It is not per-device: revoking one device means changing the
+  key on all of them.
+- **Same-origin by default.** The server serves the built app as well as the API, which avoids CORS, mixed-content
+  blocking, and Chrome's private-network prompts, and lets the app ship a strict Content Security Policy. The service
+  worker caches that copy too, so it still opens when the server is unreachable. The GitHub Pages copy can sync as well
+  once its origin is allowed with `RECALL_ALLOWED_ORIGINS`.
+- **Not done:** per-device keys, pairing by QR code, end-to-end encryption of the server copy, and automatic
+  server-side backup rotation (the `backup` command plus cron covers it).
+
 ## Not done, on purpose
 
-- No service worker or offline cache yet. The app works offline once loaded, but a fresh load needs the host. Adding a
-  service worker brings update and versioning concerns; worth a separate change.
 - No dark mode. The PRD centers the cream-and-green identity; a dark variant should be designed, not inverted.
 - No AI. The Settings page says so plainly. See the README roadmap.

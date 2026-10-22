@@ -24,8 +24,13 @@ export interface Workspace {
   loadedAt: number;
   storage: StorageStatus;
   versionChanged: boolean;
-  /** Reload from storage and tell other tabs. Call after every write. */
-  refresh: () => Promise<void>;
+  /** Counts writes made in this tab; sync watches it to upload soon after a change. */
+  localWrites: number;
+  /**
+   * Reload from storage and tell other tabs. Call after every write. Sync
+   * passes 'sync' so applying the server's changes doesn't trigger an upload.
+   */
+  refresh: (source?: 'local' | 'sync') => Promise<void>;
   updatePreferences: (patch: Partial<Preferences>) => Promise<void>;
   requestPersistentStorage: () => Promise<StorageStatus>;
 }
@@ -58,6 +63,7 @@ export function WorkspaceProvider({ children, dbName }: { children: ReactNode; d
   const [now, setNow] = useState(() => Date.now());
   const [loadedAt, setLoadedAt] = useState(0);
   const [storage, setStorage] = useState<StorageStatus>('unknown');
+  const [localWrites, setLocalWrites] = useState(0);
   const channel = useRef<BroadcastChannel | null>(null);
   const persistAsked = useRef(false);
 
@@ -82,10 +88,14 @@ export function WorkspaceProvider({ children, dbName }: { children: ReactNode; d
     }
   }, [repo]);
 
-  const refresh = useCallback(async () => {
-    await load();
-    channel.current?.postMessage('changed');
-  }, [load]);
+  const refresh = useCallback(
+    async (source: 'local' | 'sync' = 'local') => {
+      await load();
+      channel.current?.postMessage('changed');
+      if (source === 'local') setLocalWrites((n) => n + 1);
+    },
+    [load],
+  );
 
   useEffect(() => {
     void load();
@@ -145,7 +155,7 @@ export function WorkspaceProvider({ children, dbName }: { children: ReactNode; d
     async (patch: Partial<Preferences>) => {
       const next = { ...preferences, ...patch };
       setPreferences(next);
-      await repo.savePreferences(next);
+      await repo.savePreferences(next, Date.now());
       await refresh();
     },
     [preferences, repo, refresh],
@@ -170,6 +180,7 @@ export function WorkspaceProvider({ children, dbName }: { children: ReactNode; d
       loadedAt,
       storage,
       versionChanged,
+      localWrites,
       refresh,
       updatePreferences,
       requestPersistentStorage,
@@ -189,6 +200,7 @@ export function WorkspaceProvider({ children, dbName }: { children: ReactNode; d
     loadedAt,
     storage,
     versionChanged,
+    localWrites,
     refresh,
     updatePreferences,
     requestPersistentStorage,
