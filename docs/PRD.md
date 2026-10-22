@@ -1,7 +1,7 @@
 # Recall Product Requirements Document
 
-**Version:** 1.0  
-**Date:** October 9, 2026  
+**Version:** 1.1  
+**Date:** October 9, 2026; revised October 15, 2026 to add quick checks (§7, §8)  
 **Owner:** Stefan Jenss  
 **Purpose:** Build a standalone version of Recall outside ChatGPT Sites.  
 **Status:** Ready for implementation planning. Existing requirements and proposed implementation defaults are distinguished below.
@@ -27,6 +27,7 @@ The owner wants an Anki-like review mechanism with a substantially more readable
 - Avoid a generic rounded-card dashboard aesthetic.
 - Define AI answer grading with clear feedback about correct and missing aspects.
 - Produce a standalone app that is independent of ChatGPT Sites.
+- Offer an optional, lighter multiple-choice "quick check" mode that counts for less than full recall and can't stand in for it indefinitely (requested October 2026).
 
 **AI access constraint:** In the earlier discussion, the owner preferred not to use a paid API. This PRD therefore makes manual study and external-assistant workflows complete without paid inference. Embedded AI remains a separately enabled capability. The builder must not assume a consumer AI subscription grants an external app programmatic inference access; validate the chosen provider's documented integration before promising it. Do not obtain credentials, incur inference charges, or add a paid dependency without a new owner decision.
 
@@ -177,9 +178,21 @@ Progress shows review counts, 14-day activity, self-rated Good/Easy share, cards
 - Save failure keeps the learner on the card with the draft intact and a retry option. Duplicate retry returns the already committed review rather than creating another one.
 - No due cards: show a caught-up state, the next scheduled time if known, and an option to add knowledge. Do not advance future due times for engagement.
 
+### Quick checks (multiple choice)
+
+The owner often studies with an assistant that gives each question both a flashcard form and a four-option multiple-choice form, and wants a lighter mode for low-energy days. Multiple choice tests recognition, which is weaker evidence than recall (§1), so quick checks supplement full recall and are weighted less.
+
+- Cards may carry optional `choices`: one correct option (a one-line form of the answer) and one to three plausible wrong options, each up to 500 characters. The full reference answer remains the card's answer. Options are trimmed; blank wrong options are dropped; options must differ from each other.
+- Authoring, editing, import (JSON), content export, and the assistant prompt all support options. TSV import does not.
+- Today offers Full recall or Quick check for the session. A quick-check session takes only due cards that have options and are under the quick-check limit. Explain how many due cards qualify and why the others don't.
+- The options appear in an order shuffled once per attempt, so a reload keeps the order. The first pick counts and is frozen like a revealed answer. The result shows the correct option and the learner's pick with text and a mark, not color alone, followed by the full reference answer. Continue saves the result. Keys 1–4 pick and Space continues, under the same rules as recall shortcuts.
+- Scheduling follows §8's quick-check rule: a correct pick never lengthens the interval; a wrong pick is applied as Again; after two quick checks in a row the card needs a full recall.
+- Progress reports quick checks separately ("picked correctly, recognition, not recall"). They are excluded from self-rating shares and calibration. Activity, totals, and streaks count them as reviews.
+- The method page explains the rules and the limit, plainly.
+
 ## 8. Scheduler specification
 
-Use a pure function taking a card, a rating, and a supplied current timestamp. Store timestamps in UTC milliseconds and intervals in days. Keep this implementation identified as recall-sm2-v1. It is an app-specific heuristic, not Anki compatibility or a prescription from *Make It Stick*.
+Use a pure function taking a card, a rating, and a supplied current timestamp. Store timestamps in UTC milliseconds and intervals in days. This implementation is identified as recall-sm2-v2: the recall-sm2-v1 rating rules below, unchanged, plus the quick-check rule. It is an app-specific heuristic, not Anki compatibility or a prescription from *Make It Stick*.
 
 Let I be the previous interval, E the previous ease, and R the completed review count. Calculate with the previous values before incrementing counts.
 
@@ -191,6 +204,16 @@ Let I be the previous interval, E the previous ease, and R the completed review 
 | Easy, 4 | 4 if R = 0 or I < 1; otherwise max(I + 1, round(I × E × 1.3)) | min(3.5, E + 0.15) |
 
 Cap the resulting interval at 3,650 days. Increment R once for every committed review; increment lapses only for Again. The due timestamp is commit time plus round(interval × 86,400,000). A card is due when dueAt <= now and it is neither paused nor deleted.
+
+**Quick-check rule (added in v2).** Let Q be the number of quick checks since the card's last full-recall review.
+
+| Quick-check outcome | Due | Interval, ease, R, lapses | Q |
+| --- | --- | --- | --- |
+| Correct pick | commit time + min(2, max(1, floor(I))) days | unchanged | Q + 1 |
+| Wrong pick | exactly as Again | exactly as Again | Q + 1 |
+| Any full-recall rating | per the table above | per the table above | 0 |
+
+A card is eligible for a quick check only when it has options and Q < 2. A correct pick therefore can't push a card out further, change its ease, or move it out of "new"; the next full recall continues from the real interval. v1 schedules migrate to v2 unchanged with Q = 0.
 
 Queue construction must first use previously reviewed due cards, then new cards. Within each group, sort by oldest due time and a stable ID tie-breaker, then choose a different topic from the preceding card when one is available in that group. A single-topic group remains valid. Fill up to the selected session size.
 
@@ -322,11 +345,11 @@ Keep inference behind a separate adapter. A hosted provider later requires a bac
 
 | Entity | Important fields |
 | --- | --- |
-| Card | ID, topic, question, answer, kind, source, contentVersion, createdAt, updatedAt, deletedAt |
-| Schedule | cardId, dueAt, intervalDays, ease, reviewCount, lapseCount, paused, schedulerVersion, stateVersion |
+| Card | ID, topic, question, answer, kind, source, optional multiple-choice options, contentVersion, createdAt, updatedAt, deletedAt |
+| Schedule | cardId, dueAt, intervalDays, ease, reviewCount, lapseCount, paused, schedulerVersion, stateVersion, quick checks since last recall |
 | Rubric | ID, cardId, version, criteria, weights, acceptable alternatives, critical misconceptions |
-| Session | ID, selected topics/size, queue IDs, current index, status, startedAt, endedAt, current draft/reveal state |
-| Review | ID/idempotency key, cardId/version, sessionId, response, confidence, final rating, before/after schedule, committedAt, topic/content snapshot |
+| Session | ID, mode (full recall or quick check), selected topics/size, queue IDs, current index, status, startedAt, endedAt, current draft/reveal state or shown options and pick |
+| Review | ID/idempotency key, cardId/version, sessionId, mode, response, confidence, final rating (full recall) or options, pick, and correctness (quick check), before/after schedule, committedAt, topic/content snapshot |
 | Assessment | ID, attemptId, card/rubric versions, validated feedback, computed label/score, suggestion, provider/model/prompt versions, createdAt |
 | Reflection | ID, sessionId, body, createdAt |
 | Preferences | schema version, timezone, reading size, session size, AI mode; no secrets |
@@ -384,8 +407,12 @@ If a card is edited, deleted, paused, or reviewed elsewhere during a session, re
 | AC20 | Grading returns malformed data, times out, or includes injected instructions in learner content | No schedule changes; safe error/fallback; untrusted instructions are ignored |
 | AC21 | Learner overrides an AI suggestion | Final learner rating drives scheduling; suggestion remains separately recorded |
 | AC22 | User deletes all data | All workspace records disappear; app returns to the fresh state |
+| AC23 | Quick check on a new card and on an established card with I=10, E=2.5 | Correct: due +1 day and +2 days, interval/ease/R unchanged; wrong: identical to Again |
+| AC24 | A card is quick-checked twice in a row | It's excluded from quick-check sessions until a full-recall review, which resets the count |
+| AC25 | A version 1 database is opened, or a version 1 backup restored | Every record is kept; cards have no options; schedules become recall-sm2-v2 with unchanged intervals; past reviews are recall reviews |
+| AC26 | Progress after quick checks | Quick checks are reported separately and excluded from self-rating shares |
 
-AC01–18 and AC22 gate P0. AC19–21 gate P1 embedded grading. Verify accessibility manually as well as with automated tooling. Proposed responsiveness target: ordinary local navigation/filtering remains under 200 ms with 5,000 cards on a modern desktop; test and report the device/data conditions rather than treating this as a proven benchmark.
+AC01–18 and AC22 gate P0. AC23–26 gate quick checks. AC19–21 gate P1 embedded grading. Verify accessibility manually as well as with automated tooling. Proposed responsiveness target: ordinary local navigation/filtering remains under 200 ms with 5,000 cards on a modern desktop; test and report the device/data conditions rather than treating this as a proven benchmark.
 
 For AI grading, use a small curated fixture set covering correct paraphrases, omissions, contradictions, alternative valid explanations, ambiguous references, and prompt injection. Inspect actual provider results in addition to schema/mocked tests. A provider's happy-path demo is insufficient to declare grading ready.
 

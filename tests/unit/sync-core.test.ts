@@ -15,6 +15,7 @@ const card = (over: Partial<Card> = {}): Card => ({
   answer: 'Slower writes.',
   kind: 'recall',
   source: null,
+  choices: null,
   contentVersion: 1,
   createdAt: T0,
   updatedAt: T0,
@@ -113,6 +114,7 @@ describe('change validation', () => {
         hlc,
         value: {
           id: 's1',
+          mode: 'recall',
           topics: null,
           size: 5,
           queue: [],

@@ -1,26 +1,30 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { href, navigate } from '../../app/router';
 import { useWorkspace } from '../../app/workspace';
 import { charCount, LIMITS, overLimitMessage } from '../../domain/limits';
-import { formatInterval, previewRatings } from '../../domain/scheduler';
+import { DAY_MS, formatInterval, previewQuickCheck, previewRatings, QUICK_CHECK_LIMIT } from '../../domain/scheduler';
 import {
   CONFIDENCE_LABELS,
   CONFIDENCE_LEVELS,
   KIND_LABELS,
+  MODE_DESCRIPTIONS,
+  MODE_LABELS,
   RATING_DESCRIPTIONS,
   RATING_LABELS,
   RATINGS,
   type Confidence,
   type Rating,
+  type Review,
   type SkipReason,
 } from '../../domain/types';
-import type { PracticeState } from '../../storage/repository';
-import { CharCount, ConfirmDialog, Markdown, Notice, Segmented, SourceLine } from '../components/common';
+import type { CommitResult, PracticeState } from '../../storage/repository';
+import { CharCount, ConfirmDialog, Markdown, Notice, OptionText, Segmented, SourceLine } from '../components/common';
 
 type Phase = 'loading' | 'none' | 'answering' | 'revealing' | 'revealed' | 'saving';
 
 type Problem =
-  | { kind: 'save-error'; message: string; rating: Rating }
+  /** `rating` is null for a quick check, which has no self-rating. */
+  | { kind: 'save-error'; message: string; rating: Rating | null }
   | { kind: 'reveal-error'; message: string }
   | { kind: 'edited' }
   | { kind: 'reviewed-elsewhere' }
@@ -46,6 +50,13 @@ function digitsAreTyped(target: EventTarget | null): boolean {
 
 function message(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function savedAnnouncement(review: Review, duplicate: boolean): string {
+  const outcome =
+    review.mode === 'quick-check' ? (review.quickCheck.correct ? 'correct' : 'missed') : RATING_LABELS[review.rating];
+  const due = formatInterval((review.after.dueAt - review.committedAt) / DAY_MS);
+  return `${duplicate ? 'Already saved' : 'Saved'}: ${outcome}. Due again in ${due}.`;
 }
 
 export function Practice() {
@@ -167,20 +178,43 @@ export function Practice() {
     }
   }, [phase, session, attempt, response, confidence, repo, apply]);
 
-  const rate = useCallback(
-    async (rating: Rating) => {
+  /** Quick check: the first pick freezes the attempt and shows the result. */
+  const pick = useCallback(
+    async (index: number) => {
+      if (phase !== 'answering' || !session || !attempt?.options) return;
+      setPhase('revealing');
+      setProblem(null);
+      try {
+        const next = await repo.pickOption(session.id, attempt.id, index, Date.now());
+        if (next && next.session.attempt?.id !== attempt.id) {
+          apply(next, 'question');
+          setProblem({ kind: 'session-changed' });
+          return;
+        }
+        apply(next, 'answer');
+      } catch (err) {
+        setPhase('answering');
+        setProblem({ kind: 'reveal-error', message: message(err) });
+      }
+    },
+    [phase, session, attempt, repo, apply],
+  );
+
+  /** Commit the revealed attempt: a self-rating for full recall, or null to save a quick check. */
+  const commit = useCallback(
+    async (rating: Rating | null) => {
       if (!session || !attempt) return;
       if (phase !== 'revealed') return;
       if (problem && problem.kind !== 'save-error') return;
       setPhase('saving');
       setProblem(null);
       try {
-        const result = await repo.commitReview(session.id, attempt.id, rating, Date.now());
+        const result: CommitResult =
+          rating === null
+            ? await repo.commitQuickCheck(session.id, attempt.id, Date.now())
+            : await repo.commitReview(session.id, attempt.id, rating, Date.now());
         if (result.status === 'committed' || result.status === 'duplicate') {
-          const r = result.review;
-          setAnnouncement(
-            `${result.status === 'duplicate' ? 'Already saved' : 'Saved'}: ${RATING_LABELS[r.rating]}. Due again in ${formatInterval(r.after.intervalDays)}.`,
-          );
+          setAnnouncement(savedAnnouncement(result.review, result.status === 'duplicate'));
           void ws.refresh();
           apply(result.state, 'question');
           return;
@@ -230,22 +264,36 @@ export function Practice() {
     setProblem((p) => p ?? { kind: 'session-changed' });
   }, [ws.status, ws.loadedAt, ws.activeSession, session, phase]);
 
-  // ---- Keyboard: Space reveals, 1–4 rate. Never while typing, in a dialog, or saving. ----
+  // ---- Keyboard. Full recall: Space reveals, 1–4 rate. Quick check: 1–4 pick, Space continues.
+  // Never while typing, in a dialog, or saving. ----
+  const quick = session?.mode === 'quick-check';
+  const optionCount = attempt?.options?.length ?? 0;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
       if (document.querySelector('dialog[open]')) return;
-      if (e.key === ' ' && phase === 'answering' && !spaceIsTaken(e.target)) {
-        e.preventDefault();
-        void reveal();
-      } else if (/^[1-4]$/.test(e.key) && phase === 'revealed' && !digitsAreTyped(e.target)) {
-        e.preventDefault();
-        void rate(Number(e.key) as Rating);
+      if (e.key === ' ' && !spaceIsTaken(e.target)) {
+        if (!quick && phase === 'answering') {
+          e.preventDefault();
+          void reveal();
+        } else if (quick && phase === 'revealed') {
+          e.preventDefault();
+          void commit(null);
+        }
+      } else if (/^[1-9]$/.test(e.key) && !digitsAreTyped(e.target)) {
+        const n = Number(e.key);
+        if (quick && phase === 'answering' && n <= optionCount) {
+          e.preventDefault();
+          void pick(n - 1);
+        } else if (!quick && phase === 'revealed' && n <= 4) {
+          e.preventDefault();
+          void commit(n as Rating);
+        }
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [phase, reveal, rate]);
+  }, [phase, quick, optionCount, reveal, pick, commit]);
 
   // ---- Render ----
   if (phase === 'loading') {
@@ -288,6 +336,9 @@ export function Practice() {
   const previews = state?.schedule ? previewRatings(state.schedule, ws.now) : [];
   const ratingBlocked = !!problem && problem.kind !== 'save-error';
   const isNewCard = state?.schedule?.reviewCount === 0;
+  const problemNotice = problem ? (
+    <ProblemNotice problem={problem} onRetry={commit} onSkip={skipCard} onLoadUpdated={loadUpdated} onReload={load} />
+  ) : null;
 
   return (
     <div className="screen practice">
@@ -326,6 +377,12 @@ export function Practice() {
           <span>{card.topic}</span>
           <span aria-hidden="true"> · </span>
           <span>{KIND_LABELS[card.kind]}</span>
+          {quick ? (
+            <>
+              <span aria-hidden="true"> · </span>
+              <span>{MODE_LABELS['quick-check']}</span>
+            </>
+          ) : null}
           {isNewCard ? (
             <>
               <span aria-hidden="true"> · </span>
@@ -338,7 +395,24 @@ export function Practice() {
         </h2>
         <Markdown source={card.question} className="practice__question" />
 
-        {!revealed ? (
+        {quick && attempt.options ? (
+          <QuickCheck
+            options={attempt.options}
+            picked={attempt.picked}
+            correctOption={card.choices?.correct ?? null}
+            answer={card.answer}
+            source={card.source}
+            phase={phase}
+            daysIfCorrect={state?.schedule ? previewQuickCheck(state.schedule, true, ws.now) : null}
+            daysIfMissed={state?.schedule ? previewQuickCheck(state.schedule, false, ws.now) : null}
+            reachesLimit={(state?.schedule?.quickChecksSinceRecall ?? 0) + 1 >= QUICK_CHECK_LIMIT}
+            blocked={ratingBlocked}
+            problem={problemNotice}
+            resultHeading={answerHeading}
+            onPick={pick}
+            onContinue={() => void commit(null)}
+          />
+        ) : !revealed ? (
           <form
             className="practice__attempt"
             onSubmit={(e) => {
@@ -387,9 +461,7 @@ export function Practice() {
               allowClear
               disabled={phase === 'revealing'}
             />
-            {problem ? (
-              <ProblemNotice problem={problem} onRetry={rate} onSkip={skipCard} onLoadUpdated={loadUpdated} onReload={load} />
-            ) : null}
+            {problemNotice}
             <div className="button-row">
               <button type="submit" className="button button--primary button--large" disabled={phase === 'revealing'}>
                 Reveal answer <kbd aria-hidden="true">Space</kbd>
@@ -418,9 +490,7 @@ export function Practice() {
               <SourceLine source={card.source} />
             </section>
 
-            {problem ? (
-              <ProblemNotice problem={problem} onRetry={rate} onSkip={skipCard} onLoadUpdated={loadUpdated} onReload={load} />
-            ) : null}
+            {problemNotice}
 
             <section className="rating" aria-labelledby="rating-title">
               <h2 id="rating-title" className="rating__title">
@@ -437,7 +507,7 @@ export function Practice() {
                       key={r}
                       type="button"
                       className={`rating__button rating__button--${r}`}
-                      onClick={() => void rate(r)}
+                      onClick={() => void commit(r)}
                       disabled={saving || ratingBlocked}
                       aria-keyshortcuts={String(r)}
                     >
@@ -483,6 +553,136 @@ export function Practice() {
   );
 }
 
+function QuickCheck({
+  options,
+  picked,
+  correctOption,
+  answer,
+  source,
+  phase,
+  daysIfCorrect,
+  daysIfMissed,
+  reachesLimit,
+  blocked,
+  problem,
+  resultHeading,
+  onPick,
+  onContinue,
+}: {
+  options: string[];
+  picked: number | null;
+  correctOption: string | null;
+  answer: string;
+  source: string | null;
+  phase: Phase;
+  daysIfCorrect: number | null;
+  daysIfMissed: number | null;
+  reachesLimit: boolean;
+  blocked: boolean;
+  problem: ReactNode;
+  resultHeading: RefObject<HTMLHeadingElement | null>;
+  onPick: (index: number) => void;
+  onContinue: () => void;
+}) {
+  if (picked === null) {
+    return (
+      <section className="choices" aria-labelledby="choices-title">
+        <h2 id="choices-title" className="choices__title">
+          Choose the best answer
+        </h2>
+        <p className="choices__hint muted">{MODE_DESCRIPTIONS['quick-check']}. Your first pick counts.</p>
+        <ol className="choices__list">
+          {options.map((option, i) => (
+            <li key={i}>
+              <button
+                type="button"
+                className="choice"
+                onClick={() => onPick(i)}
+                disabled={phase !== 'answering'}
+                aria-keyshortcuts={String(i + 1)}
+              >
+                <kbd className="choice__key" aria-hidden="true">
+                  {i + 1}
+                </kbd>
+                <OptionText source={option} className="choice__text" />
+              </button>
+            </li>
+          ))}
+        </ol>
+        {problem}
+      </section>
+    );
+  }
+
+  const correct = correctOption !== null && options[picked] === correctOption;
+  const days = correct ? daysIfCorrect : daysIfMissed;
+  const saving = phase === 'saving';
+  return (
+    <>
+      <section className="choices" aria-labelledby="result-title">
+        <h2
+          id="result-title"
+          ref={resultHeading}
+          tabIndex={-1}
+          className={`choices__result choices__result--${correct ? 'correct' : 'missed'}`}
+        >
+          <span aria-hidden="true">{correct ? '✓' : '✗'} </span>
+          {correct ? 'Correct' : 'Not quite'}
+        </h2>
+        <ol className="choices__list">
+          {options.map((option, i) => {
+            const isCorrect = option === correctOption;
+            const isPicked = i === picked;
+            const status = isCorrect ? (isPicked ? 'Your pick · correct' : 'Correct answer') : isPicked ? 'Your pick' : null;
+            return (
+              <li
+                key={i}
+                className={`choice choice--result${isCorrect ? ' is-correct' : ''}${isPicked && !isCorrect ? ' is-wrong' : ''}`}
+              >
+                <span className="choice__key choice__mark" aria-hidden="true">
+                  {isCorrect ? '✓' : isPicked ? '✗' : ''}
+                </span>
+                <span className="choice__body">
+                  <OptionText source={option} className="choice__text" />
+                  {status ? <span className="choice__status">{status}</span> : null}
+                </span>
+              </li>
+            );
+          })}
+        </ol>
+      </section>
+
+      <section className="practice__answer" aria-labelledby="answer-title">
+        <h2 id="answer-title" className="eyebrow">
+          Full answer
+        </h2>
+        <Markdown source={answer} className="practice__answer-text" />
+        <SourceLine source={source} />
+      </section>
+
+      {problem}
+
+      <section className="quick-next" aria-label="Save and continue">
+        <p className="muted">
+          {correct
+            ? 'Recognizing the answer doesn’t lengthen its interval.'
+            : 'A miss counts as Again, the same as in full recall.'}
+          {days !== null ? ` Back in ${formatInterval(days)}.` : ''}
+          {reachesLimit ? ' Next time, this card needs a full recall.' : ''}
+        </p>
+        <button type="button" className="button button--primary button--large" onClick={onContinue} disabled={saving || blocked}>
+          Continue <kbd aria-hidden="true">Space</kbd>
+        </button>
+        {saving ? (
+          <p className="muted" role="status">
+            Saving…
+          </p>
+        ) : null}
+      </section>
+    </>
+  );
+}
+
 function ProblemNotice({
   problem,
   onRetry,
@@ -491,7 +691,7 @@ function ProblemNotice({
   onReload,
 }: {
   problem: Problem;
-  onRetry: (r: Rating) => void;
+  onRetry: (r: Rating | null) => void;
   onSkip: (reason: SkipReason) => void;
   onLoadUpdated: () => void;
   onReload: () => void;
@@ -499,10 +699,15 @@ function ProblemNotice({
   switch (problem.kind) {
     case 'save-error':
       return (
-        <Notice tone="error" title="That rating wasn’t saved">
-          <p>{problem.message} Your answer is still here and nothing changed. Try again, or choose a different rating.</p>
+        <Notice tone="error" title={problem.rating === null ? 'That quick check wasn’t saved' : 'That rating wasn’t saved'}>
+          <p>
+            {problem.message}{' '}
+            {problem.rating === null
+              ? 'Nothing changed. Try again.'
+              : 'Your answer is still here and nothing changed. Try again, or choose a different rating.'}
+          </p>
           <button type="button" className="button button--secondary" onClick={() => onRetry(problem.rating)}>
-            Retry “{RATING_LABELS[problem.rating]}”
+            {problem.rating === null ? 'Retry' : `Retry “${RATING_LABELS[problem.rating]}”`}
           </button>
         </Notice>
       );
@@ -527,7 +732,7 @@ function ProblemNotice({
     case 'reviewed-elsewhere':
       return (
         <Notice tone="warn" title="Already reviewed elsewhere">
-          <p>This card’s schedule changed in another tab or window, so this rating wasn’t saved.</p>
+          <p>This card’s schedule changed in another tab or window, so this result wasn’t saved.</p>
           <button type="button" className="button button--secondary" onClick={() => onSkip('reviewed-elsewhere')}>
             Continue to the next card
           </button>
@@ -537,7 +742,7 @@ function ProblemNotice({
     case 'deleted':
       return (
         <Notice tone="warn" title={`This card was ${problem.kind}`}>
-          <p>It was {problem.kind} after you started, so this rating wasn’t saved.</p>
+          <p>It was {problem.kind} after you started, so this result wasn’t saved.</p>
           <button type="button" className="button button--secondary" onClick={() => onSkip(problem.kind)}>
             Continue to the next card
           </button>

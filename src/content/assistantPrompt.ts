@@ -1,4 +1,4 @@
-import { IMPORT_MAX_CARDS, LIMITS } from '../domain/limits';
+import { IMPORT_MAX_CARDS, LIMITS, MAX_DISTRACTORS } from '../domain/limits';
 
 export interface PromptOptions {
   material: string;
@@ -39,6 +39,14 @@ HOW TO WRITE THE CARDS
 - If the material is unclear or too thin for a card, leave that card out rather than guessing.
 - ${topicLine}
 
+MULTIPLE-CHOICE OPTIONS
+Each card can also carry a multiple-choice version in "choices", used for quick checks when the learner wants a lighter review. The question and full answer stay the main card.
+- "correct": a short statement of the right answer (one line, not the whole explanation).
+- "distractors": exactly ${MAX_DISTRACTORS} wrong options that are plausible to someone who half-knows the material, such as common misconceptions or a related idea applied in the wrong place.
+- Match the length, style, and level of detail of the correct option so the answer can't be spotted by its form.
+- No "all of the above", "none of the above", jokes, or options that are only partly wrong.
+- If a card doesn't have a fair multiple-choice form (for example, a long explanation), use "choices": null.
+
 OUTPUT
 Return only JSON in exactly this shape, with no commentary before or after it:
 
@@ -50,10 +58,14 @@ Return only JSON in exactly this shape, with no commentary before or after it:
       "kind": "recall",
       "question": "The prompt (max ${LIMITS.question} characters)",
       "answer": "The reference answer (max ${LIMITS.answer} characters)",
-      "source": null
+      "source": null,
+      "choices": {
+        "correct": "The right answer in one line (max ${LIMITS.choice} characters)",
+        "distractors": ["A plausible wrong option", "Another plausible wrong option", "A third plausible wrong option"]
+      }
     }
   ]
 }
 
-"kind" must be one of "recall", "apply", "compare", "explain". "source" is a string or null. Return at most ${IMPORT_MAX_CARDS} cards.`;
+"kind" must be one of "recall", "apply", "compare", "explain". "source" is a string or null. "choices" is an object or null. Return at most ${IMPORT_MAX_CARDS} cards.`;
 }

@@ -12,15 +12,23 @@ in sync.
 | -------------------------------------------- | -------------------------------------------------- | ---------------------------------------------- |
 | ![Today](docs/screenshots/desktop-today.png) | ![Practice](docs/screenshots/desktop-practice.png) | ![Answer](docs/screenshots/desktop-answer.png) |
 
+| Quick check                                              | Quick-check result                                                     |
+| -------------------------------------------------------- | ---------------------------------------------------------------------- |
+| ![Quick check](docs/screenshots/desktop-quick-check.png) | ![Quick-check result](docs/screenshots/desktop-quick-check-result.png) |
+
 More screenshots, at desktop and phone widths, are in [`docs/screenshots/`](docs/screenshots/).
 
 ## What it does
 
-- **Today:** what's due, a session size (5/10/20) and topic choice, streak and activity, and a starter collection when
-  the app is empty.
+- **Today:** what's due, full recall or a quick check, a session size (5/10/20) and topic choice, streak and activity,
+  and a starter collection when the app is empty.
 - **Practice:** the question comes first. Type an answer or say it aloud, optionally record your confidence, reveal the
   answer, and rate it Again, Hard, Good, or Easy. Each rating button shows when the card will come back. Space reveals
   and 1–4 rate, but only when you aren't typing.
+- **Quick checks:** a lighter, multiple-choice session for cards that have options. Pick with 1–4, see the right answer
+  and the full explanation, and continue with Space. Recognition is easier than recall, so a correct pick never
+  lengthens a card's interval, a miss counts as Again, and after two quick checks in a row a card waits for a full
+  recall.
 - **Collection:** search, filter by topic and status, edit cards, inspect a card's schedule and history, pause or
   resume, reset progress, or delete.
 - **Add knowledge:** write cards (Markdown, including code blocks), or copy a ready-made prompt into any AI assistant
@@ -135,7 +143,7 @@ Pages copy instead, is in [`docs/SYNC.md`](docs/SYNC.md).
 
 ```
 src/
-  domain/     Pure logic: types, scheduler (recall-sm2-v1), queue building, limits, time, stats
+  domain/     Pure logic: types, scheduler (recall-sm2-v2), queue building, options, limits, time, stats, record upgrades
   content/    Import parsing/validation, content export, full backup format, starter cards, assistant prompt
   storage/    IndexedDB schema (db.ts) and the repository: the only code that reads or writes storage
   sync/       Sync clock, wire format, and merge rules (shared with the server), HTTP client, sync pass

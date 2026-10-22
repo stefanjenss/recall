@@ -3,15 +3,32 @@ import { href, navigate } from '../../app/router';
 import { useFlash } from '../../app/flash';
 import { useWorkspace } from '../../app/workspace';
 import { STARTER_CARDS } from '../../content/starter';
+import { QUICK_CHECK_LIMIT } from '../../domain/scheduler';
 import { nextDueFor, summarizeToday } from '../../domain/stats';
 import { formatDateTime, formatRelative } from '../../domain/time';
-import { SESSION_SIZES, type SessionSize } from '../../domain/types';
+import {
+  MODE_DESCRIPTIONS,
+  MODE_LABELS,
+  PRACTICE_MODES,
+  SESSION_SIZES,
+  type PracticeMode,
+  type SessionSize,
+} from '../../domain/types';
 import { useSync } from '../../app/sync';
 import { BACKUP_REMINDER_DAYS, backupIsStale, downloadFullBackup } from '../backupActions';
 import { Notice, PageHeader, Segmented, StatList } from '../components/common';
 import { LEARNING_NOTES } from './Method';
 
 const ALL = '__all__';
+
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+function quickCheckUnavailable(topic: string | null): string {
+  return (
+    `No due cards${topic ? ` in ${topic}` : ''} can be quick-checked right now. Quick checks need multiple-choice options, ` +
+    `and after ${QUICK_CHECK_LIMIT} in a row a card needs a full recall.`
+  );
+}
 
 export function Today() {
   const ws = useWorkspace();
@@ -22,6 +39,8 @@ export function Today() {
   // Preferences may finish loading after first render, so only a choice made here overrides them.
   const [chosenSize, setSize] = useState<SessionSize | null>(null);
   const size = chosenSize ?? ws.preferences.sessionSize;
+  const [mode, setMode] = useState<PracticeMode>('recall');
+  const quick = mode === 'quick-check';
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -31,7 +50,11 @@ export function Today() {
   );
   const selectedTopic = topic === ALL ? null : topic;
   const topicSummary = summary.topics.find((t) => t.topic === selectedTopic);
-  const dueInSelection = selectedTopic ? (topicSummary?.due ?? 0) : summary.dueCount;
+  const dueInSelection = selectedTopic
+    ? ((quick ? topicSummary?.quickCheckDue : topicSummary?.due) ?? 0)
+    : quick
+      ? summary.dueQuickCheck
+      : summary.dueCount;
   const sessionCount = Math.min(dueInSelection, size);
   const dateLabel = new Intl.DateTimeFormat(undefined, { timeZone: tz, weekday: 'long', month: 'long', day: 'numeric' }).format(
     ws.now,
@@ -42,13 +65,16 @@ export function Today() {
     setBusy(true);
     setMessage(null);
     try {
-      const result = await ws.repo.startSession({ topics, size, now: Date.now() });
+      const result = await ws.repo.startSession({ topics, size, now: Date.now(), mode });
       if (result.status === 'started') {
         // Practice refreshes the workspace once its first card is on screen.
         navigate('practice');
       } else if (result.status === 'active-exists') {
         await ws.refresh();
         setMessage('You already have a session in progress. Resume it or end it first.');
+      } else if (quick) {
+        await ws.refresh();
+        setMessage(quickCheckUnavailable(topics?.[0] ?? null));
       } else {
         await ws.refresh();
         const next = nextDueFor(ws.activeCards, ws.schedules, Date.now(), topics?.[0] ?? null);
@@ -126,9 +152,9 @@ export function Today() {
       {session ? (
         <section className="panel panel--accent resume" aria-labelledby="resume-title">
           <div>
-            <h2 id="resume-title">Session in progress</h2>
+            <h2 id="resume-title">{session.mode === 'quick-check' ? 'Quick check in progress' : 'Session in progress'}</h2>
             <p>
-              {reviewedInSession} of {session.queue.length} cards reviewed
+              {reviewedInSession} of {session.queue.length} cards {session.mode === 'quick-check' ? 'checked' : 'reviewed'}
               {session.topics ? ` · ${session.topics.join(', ')}` : ''}. Nothing is rated until you choose.
             </p>
           </div>
@@ -204,6 +230,25 @@ export function Today() {
               }}
             >
               <Segmented
+                legend="How to practice"
+                options={PRACTICE_MODES.map((m) => ({ value: m, label: MODE_LABELS[m], hint: MODE_DESCRIPTIONS[m] }))}
+                value={mode}
+                onChange={(v) => v && setMode(v)}
+                disabled={!!session}
+              />
+              {quick ? (
+                <p className="field__hint" role="status">
+                  {summary.dueQuickCheck} of {plural(summary.dueCount, 'due card', 'due cards')} can be quick-checked
+                  {summary.dueRecallOnly > 0
+                    ? `; ${summary.dueRecallOnly} need${summary.dueRecallOnly === 1 ? 's' : ''} a full recall after ${QUICK_CHECK_LIMIT} quick checks in a row`
+                    : ''}
+                  {summary.dueNoOptions > 0
+                    ? `; ${summary.dueNoOptions} ha${summary.dueNoOptions === 1 ? 's' : 've'} no multiple-choice options`
+                    : ''}
+                  . Correct picks bring a card back in a day or two without lengthening its interval; a miss counts as Again.
+                </p>
+              ) : null}
+              <Segmented
                 legend="Session size"
                 options={SESSION_SIZES.map((s) => ({ value: s, label: String(s) }))}
                 value={size}
@@ -215,15 +260,21 @@ export function Today() {
                   Topics
                 </label>
                 <select id="topic-select" value={topic} onChange={(e) => setTopic(e.target.value)} disabled={!!session}>
-                  <option value={ALL}>All topics, mixed ({summary.dueCount} due)</option>
+                  <option value={ALL}>
+                    All topics, mixed ({quick ? `${summary.dueQuickCheck} ready` : `${summary.dueCount} due`})
+                  </option>
                   {summary.topics.map((t) => (
                     <option key={t.topic} value={t.topic}>
-                      {t.topic} ({t.due} due)
+                      {t.topic} ({quick ? `${t.quickCheckDue} ready` : `${t.due} due`})
                     </option>
                   ))}
                 </select>
               </div>
-              {dueInSelection === 0 ? (
+              {dueInSelection === 0 && quick ? (
+                <p className="field__hint" role="status">
+                  {quickCheckUnavailable(selectedTopic)}
+                </p>
+              ) : dueInSelection === 0 ? (
                 <p className="field__hint" role="status">
                   No cards are due in {selectedTopic}.{' '}
                   {(() => {
@@ -238,7 +289,8 @@ export function Today() {
                 className="button button--primary button--large"
                 disabled={busy || !!session || sessionCount === 0}
               >
-                Start review{sessionCount > 0 ? ` · ${sessionCount} card${sessionCount === 1 ? '' : 's'}` : ''}
+                {quick ? 'Start quick check' : 'Start review'}
+                {sessionCount > 0 ? ` · ${sessionCount} card${sessionCount === 1 ? '' : 's'}` : ''}
               </button>
             </form>
           ) : null}
@@ -323,9 +375,11 @@ export function Today() {
                     <button
                       type="button"
                       className="button button--quiet button--small"
-                      disabled={t.due === 0 || busy || !!session}
+                      disabled={(quick ? t.quickCheckDue : t.due) === 0 || busy || !!session}
                       onClick={() => void start([t.topic])}
-                      aria-label={`Practice ${t.topic} (${t.due} due)`}
+                      aria-label={
+                        quick ? `Quick-check ${t.topic} (${t.quickCheckDue} ready)` : `Practice ${t.topic} (${t.due} due)`
+                      }
                     >
                       Practice
                     </button>

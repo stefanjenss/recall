@@ -66,6 +66,43 @@ All dependency versions are pinned exactly in `package.json`, and `package-lock.
   away without trapping focus.
 - **Spelling** is American English.
 
+## Quick checks (October 2026)
+
+The owner asked for a "lazy mode": answer a multiple-choice version of a card instead of recalling it, weighted less, and
+usable only once or twice in a row. PRD §7 and §8 have the spec; these are the calls made while building it.
+
+- **Name.** The UI calls it "Quick check", described as "Multiple choice · recognition, not recall". The copy rules favor
+  plain honesty over a self-deprecating label.
+- **One mode per session.** Today offers Full recall or Quick check before starting. A per-card "show options" escape
+  hatch inside a full-recall attempt wasn't built; it would mix two scoring rules in one session and needs its own
+  design.
+- **The weighting.** A correct pick leaves interval, ease, and review count alone and brings the card back in
+  min(2, max(1, floor(I))) days: never sooner than a day, never later than the card's current interval or 2 days. A
+  wrong pick is a full Again, ease penalty and lapse included, because missing with the answer on screen is strong
+  evidence. After 2 quick checks in a row the card is recall-only until a full review.
+- **Pick, then continue.** Picking freezes the attempt (like Reveal) and shows the result; Continue commits. This reuses
+  the existing commit path, so idempotency, stale-version checks, and draft recovery behave exactly as in full recall,
+  and the result survives a reload. Option buttons pick on the first click with no separate Check step; "your first
+  pick counts" is stated on screen.
+- **Correctness is decided at commit**, against the card, after the `contentVersion` check, so an edit made in another
+  tab can't produce a wrong verdict.
+- **Shuffling** happens once, when the attempt is created, and the order is stored on the attempt. The domain helper
+  takes an injected random function; the repository passes `Math.random`.
+- **Options:** one correct and one to three wrong, each up to 500 characters. The editor shows three wrong-option
+  fields and drops blank ones. Options render as inline Markdown (code, emphasis) without links, because they sit
+  inside buttons.
+- **Scheduler version.** The rating rules didn't change, but due times no longer always equal last review plus
+  interval, and schedules gained a counter, so this is `recall-sm2-v2` with a relabel-only migration, per the project
+  rule. `Review.schedulerVersion` is typed as a string because older reviews correctly keep `recall-sm2-v1`.
+- **Sync.** Quick checks change record shapes that the sync server validates, and the sync design never resends a
+  record the server rejected. A server without quick-check support would reject new schedules and quick-check reviews
+  for good. So the sync protocol moved to 2, and the version is in the API path: a device and a server on different
+  versions refuse each other's requests before any record moves, with a message saying what to update, and the device
+  keeps its changes. The server's SQLite migration and devices' pulls apply the same record upgrades as IndexedDB and
+  backup restore. Storage became schema 3, since sync had already taken schema 2 for its outbox.
+- **Metrics.** Quick checks count toward activity, totals, and the streak (they are practice), and are reported on their
+  own line in Progress. They are excluded from the self-rated Good/Easy share and the confidence table.
+
 ## Performance
 
 `scripts/perf-check.mjs` restores a synthetic backup of 5,000 cards and 20,000 reviews, then times interactions end to

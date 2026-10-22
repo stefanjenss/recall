@@ -18,6 +18,16 @@ const SAMPLE_ATTEMPTS = {
   blocked: 'Blocked repeats one kind of problem; interleaved mixes them so you learn to pick the method.',
 };
 
+// The start of each starter card's correct option, so the quick-check shot can show a miss next to the right answer.
+const CORRECT_OPTIONS = {
+  'testing effect': 'Pulling information out of memory',
+  index: 'Faster reads on that column in exchange for extra storage',
+  idempotent: 'Running it again',
+  customer: 'LEFT JOIN customers',
+  spacing: 'Some forgetting',
+  blocked: 'Blocked feels more productive',
+};
+
 const browser = await chromium.launch();
 const viewports = {
   desktop: { viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 },
@@ -74,6 +84,28 @@ for (const [label, options] of Object.entries(viewports)) {
   await page.goto(`${BASE}#/add/import`);
   await page.locator('main h1').waitFor();
   await shot('import', true);
+
+  // A quick check on a card that is still due, picking a wrong option to show both marks.
+  await page.goto(BASE);
+  await page.getByRole('radio', { name: /Quick check/ }).check();
+  await page.getByRole('button', { name: /Start quick check/ }).click();
+  await page.getByRole('heading', { name: 'Choose the best answer' }).waitFor();
+  await page.locator('.practice__question').click();
+  await shot('quick-check');
+  const prompt = (await page.locator('.practice__question').innerText()).toLowerCase();
+  const right = Object.entries(CORRECT_OPTIONS).find(([key]) => prompt.includes(key))?.[1] ?? '';
+  const choiceTexts = await page.locator('button.choice .choice__text').allInnerTexts();
+  await page
+    .locator('button.choice')
+    .nth(
+      Math.max(
+        0,
+        choiceTexts.findIndex((o) => !o.startsWith(right)),
+      ),
+    )
+    .click();
+  await page.getByRole('heading', { name: 'Full answer' }).waitFor();
+  await shot('quick-check-result', label === 'mobile');
   await context.close();
 }
 

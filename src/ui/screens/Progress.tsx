@@ -45,7 +45,11 @@ export function Progress() {
       <StatList
         className="stat-list--four"
         items={[
-          { label: 'Reviews, all time', value: p.totalReviews.toLocaleString() },
+          {
+            label: 'Reviews, all time',
+            value: p.totalReviews.toLocaleString(),
+            note: p.quickChecks.total > 0 ? `incl. ${p.quickChecks.total.toLocaleString()} quick checks` : undefined,
+          },
           { label: `Last ${WINDOW} days`, value: p.reviewsInWindow.toLocaleString(), note: 'reviews' },
           { label: 'Today', value: p.reviewsToday, note: p.reviewsToday === 1 ? 'review' : 'reviews' },
           { label: 'Streak', value: p.streak, note: p.streak === 1 ? 'day' : 'days' },
@@ -133,10 +137,10 @@ export function Progress() {
                   <tr key={r}>
                     <th scope="row">{RATING_LABELS[r]}</th>
                     <td className="bars__cell">
-                      <span className="bars__bar" style={{ width: n > 0 ? `max(2px, ${(n / p.totalReviews) * 100}%)` : 0 }} />
+                      <span className="bars__bar" style={{ width: n > 0 ? `max(2px, ${(n / p.recallReviews) * 100}%)` : 0 }} />
                     </td>
                     <td className="num">
-                      {n} <span className="muted">({percent({ count: n, total: p.totalReviews })})</span>
+                      {n} <span className="muted">({percent({ count: n, total: p.recallReviews })})</span>
                     </td>
                   </tr>
                 );
@@ -146,6 +150,25 @@ export function Progress() {
           <p className="muted small">
             These are your own judgments at review time. They show how practice felt, not what you can do later.
           </p>
+
+          {p.quickChecks.total > 0 ? (
+            <>
+              <h2 id="quick-checks-title" className="section__title">
+                Quick checks <span className="muted">(recognition, not recall)</span>
+              </h2>
+              <p className="lead-stat">
+                <strong>{percent(p.quickChecks)}</strong> picked correctly
+                <span className="muted">
+                  {' '}
+                  · {p.quickChecks.count} of {p.quickChecks.total} quick checks
+                </span>
+              </p>
+              <p className="muted small">
+                Picking the right option shows you can recognize an answer, which is easier than producing it. Quick checks aren’t
+                counted in the self-ratings above and never lengthen an interval.
+              </p>
+            </>
+          ) : null}
         </section>
 
         <section className="section" aria-labelledby="intervals-title">

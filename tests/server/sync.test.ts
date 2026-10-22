@@ -2,9 +2,11 @@
 // through the real server handler and an in-memory SQLite store.
 
 import { mkdtemp, readdir, rm, writeFile, mkdir } from 'node:fs/promises';
+import { DatabaseSync } from 'node:sqlite';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { buildBackup, validateBackup } from '../../src/content/backup';
 import type { CardContent } from '../../src/domain/types';
 import { createRepository, type Repository } from '../../src/storage/repository';
 import { SyncError, type FetchLike } from '../../src/sync/client';
@@ -52,6 +54,7 @@ const content = (question: string, topic = 'SQL'): CardContent => ({
   answer: `Answer to ${question}`,
   kind: 'recall',
   source: null,
+  choices: null,
 });
 
 async function connect(repo: Repository, mode: JoinMode, now = T0) {
@@ -82,23 +85,23 @@ async function api(path: string, init: RequestInit = {}, key: string | null = KE
 describe('sync server', () => {
   it('answers health checks without a key, and everything else only with the right key', async () => {
     expect((await api('api/health', {}, null)).body).toEqual({ ok: true, app: 'recall-sync' });
-    expect((await api('api/sync/v1/info', {}, null)).status).toBe(401);
-    expect((await api('api/sync/v1/info', {}, 'wrong-key-wrong-key')).status).toBe(401);
-    const info = await api('api/sync/v1/info');
+    expect((await api('api/sync/v2/info', {}, null)).status).toBe(401);
+    expect((await api('api/sync/v2/info', {}, 'wrong-key-wrong-key')).status).toBe(401);
+    const info = await api('api/sync/v2/info');
     expect(info.status).toBe(200);
-    expect(info.body).toMatchObject({ app: 'recall-sync', protocol: 1, records: 0 });
+    expect(info.body).toMatchObject({ app: 'recall-sync', protocol: 2, records: 0 });
     expect(info.headers.get('cache-control')).toBe('no-store');
   });
 
   it('refuses pushes and pulls aimed at a different server copy', async () => {
-    const res = await api('api/sync/v1/pull?since=0', { headers: { 'X-Recall-Server': 'not-this-one' } });
+    const res = await api('api/sync/v2/pull?since=0', { headers: { 'X-Recall-Server': 'not-this-one' } });
     expect(res.status).toBe(409);
     expect(res.body.error).toBe('server-changed');
   });
 
   it('rejects invalid records individually and keeps the valid ones', async () => {
     const serverId = store.serverId();
-    const res = await api('api/sync/v1/push', {
+    const res = await api('api/sync/v2/push', {
       method: 'POST',
       headers: { 'X-Recall-Server': serverId, 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -125,7 +128,7 @@ describe('sync server', () => {
   });
 
   it('refuses changes stamped more than a day ahead of its clock', async () => {
-    const res = await api('api/sync/v1/push', {
+    const res = await api('api/sync/v2/push', {
       method: 'POST',
       headers: { 'X-Recall-Server': store.serverId() },
       body: JSON.stringify({
@@ -176,7 +179,7 @@ describe('sync server', () => {
       allowedOrigins: ['https://stefan.github.io'],
     });
     const preflight = (origin: string) =>
-      h(new Request(`${URL_BASE}api/sync/v1/info`, { method: 'OPTIONS', headers: { Origin: origin } }));
+      h(new Request(`${URL_BASE}api/sync/v2/info`, { method: 'OPTIONS', headers: { Origin: origin } }));
     expect((await preflight('https://stefan.github.io')).headers.get('access-control-allow-origin')).toBe(
       'https://stefan.github.io',
     );
@@ -429,3 +432,110 @@ describe('two devices', () => {
 function sortBy<T>(list: T[], key: keyof T): T[] {
   return [...list].sort((a, b) => String(a[key]).localeCompare(String(b[key])));
 }
+
+describe('quick checks over sync (protocol 2)', () => {
+  // Records as a device built before quick checks wrote them.
+  const v1Card = {
+    id: 'old-card',
+    topic: 'SQL',
+    question: 'Old question',
+    answer: 'Old answer',
+    kind: 'recall',
+    source: null,
+    contentVersion: 1,
+    createdAt: T0,
+    updatedAt: T0,
+    deletedAt: null,
+  };
+  const v1Schedule = {
+    cardId: 'old-card',
+    dueAt: T0 + 86_400_000,
+    intervalDays: 1,
+    ease: 2.5,
+    reviewCount: 1,
+    lapseCount: 0,
+    paused: false,
+    schedulerVersion: 'recall-sm2-v1',
+    stateVersion: 1,
+    lastReviewedAt: T0,
+  };
+
+  it('refuses requests from an app built for another protocol, and says to reload', async () => {
+    const res = await api('api/sync/v1/push', { method: 'POST', body: JSON.stringify({ deviceId: 'old', changes: [] }) });
+    expect(res.status).toBe(404);
+    expect(res.body.message).toMatch(/Reload the page to update Recall/);
+    expect(store.info(T0).records).toBe(0);
+  });
+
+  it('explains that a server from before protocol 2 needs updating, and pushes nothing to it', async () => {
+    const oldServer: FetchLike = async () =>
+      new Response(JSON.stringify({ error: 'not-found', message: 'No such endpoint.' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    await expect(probeServer(URL_BASE, KEY, oldServer)).rejects.toThrow(/doesn't speak sync protocol 2 yet/);
+  });
+
+  it('a quick check on one device reaches the other with its options, result, and schedule', async () => {
+    const laptop = device();
+    await laptop.addCards(
+      [{ ...content('Which clause filters groups?'), choices: { correct: 'HAVING', distractors: ['WHERE', 'ORDER BY'] } }],
+      T0,
+    );
+    await connect(laptop, 'upload');
+    const started = await laptop.startSession({ topics: null, size: 5, now: T0, mode: 'quick-check' });
+    if (started.status !== 'started') throw new Error('expected a quick-check session');
+    const attempt = started.state.session.attempt!;
+    await laptop.pickOption(started.state.session.id, attempt.id, attempt.options!.indexOf('HAVING'), T0);
+    const saved = await laptop.commitQuickCheck(started.state.session.id, attempt.id, T0);
+    expect(saved.status).toBe('committed');
+    await sync(laptop, T0 + MIN);
+
+    const phone = device();
+    await connect(phone, 'download', T0 + 2 * MIN);
+    const ws = await phone.loadWorkspace();
+    expect(ws.cards[0]!.choices).toEqual({ correct: 'HAVING', distractors: ['WHERE', 'ORDER BY'] });
+    expect(ws.reviews[0]).toMatchObject({ mode: 'quick-check', rating: null, quickCheck: { correct: true } });
+    expect(ws.schedules[0]).toMatchObject({ schedulerVersion: 'recall-sm2-v2', quickChecksSinceRecall: 1, reviewCount: 0 });
+  });
+
+  it('upgrades a schema-1 sync database in place, and its backup restores', async () => {
+    const path = join(dir, 'old.sqlite');
+    const old = new DatabaseSync(path);
+    old.exec(`
+      CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID;
+      CREATE TABLE records (
+        store TEXT NOT NULL, key TEXT NOT NULL, seq INTEGER NOT NULL UNIQUE, hlc TEXT NOT NULL,
+        value TEXT NOT NULL, origin TEXT, updated_at INTEGER NOT NULL, PRIMARY KEY (store, key)
+      ) WITHOUT ROWID;
+      PRAGMA user_version = 1;
+    `);
+    const insert = old.prepare('INSERT INTO records VALUES (?, ?, ?, ?, ?, ?, ?)');
+    insert.run('cards', 'old-card', 1, hlcAt(T0, 'dev-a'), JSON.stringify(v1Card), 'dev-a', T0);
+    insert.run('schedules', 'old-card', 2, hlcAt(T0, 'dev-a'), JSON.stringify(v1Schedule), 'dev-a', T0);
+    old.close();
+
+    const upgraded = openServerStore(path);
+    try {
+      const { changes } = upgraded.pull(0, 10, 'dev-b');
+      expect(changes.map((c) => c.seq)).toEqual([1, 2]); // upgraded in place, not re-sent as new changes
+      expect(changes[0]!.value).toEqual({ ...v1Card, choices: null });
+      expect(changes[1]!.value).toEqual({ ...v1Schedule, schedulerVersion: 'recall-sm2-v2', quickChecksSinceRecall: 0 });
+      expect(validateBackup(buildBackup(upgraded.exportData(), T0)).ok).toBe(true);
+    } finally {
+      upgraded.close();
+    }
+  });
+
+  it('a device upgrades older-shaped records it pulls before storing them', async () => {
+    const phone = device();
+    await connect(phone, 'download');
+    const { serverId } = (await phone.getSyncConfig())!;
+    const r = await phone.applySyncBatch({
+      serverId,
+      records: [{ store: 'cards', key: 'old-card', seq: 1, hlc: hlcAt(T0, 'dev-a'), value: v1Card }],
+    });
+    expect(r).toMatchObject({ applied: 1, ignored: 0 });
+    expect((await phone.loadWorkspace()).cards[0]).toEqual({ ...v1Card, choices: null });
+  });
+});

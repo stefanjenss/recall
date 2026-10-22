@@ -1,4 +1,5 @@
-import type { Card, Schedule, SkipReason } from './types';
+import { canQuickCheck } from './choices';
+import type { Card, PracticeMode, Schedule, SkipReason } from './types';
 
 export interface CardWithSchedule {
   card: Card;
@@ -18,11 +19,17 @@ export function isNew(schedule: Schedule): boolean {
   return schedule.reviewCount === 0;
 }
 
-/** Why a queued card can no longer be practiced, or null when it still can. */
-export function ineligibility(card: Card | undefined, schedule: Schedule | undefined, now: number): SkipReason | null {
+/** Why a queued card can no longer be practiced in this mode, or null when it still can. */
+export function ineligibility(
+  card: Card | undefined,
+  schedule: Schedule | undefined,
+  now: number,
+  mode: PracticeMode = 'recall',
+): SkipReason | null {
   if (!card || !schedule || card.deletedAt !== null) return 'deleted';
   if (schedule.paused) return 'paused';
   if (schedule.dueAt > now) return 'not-due';
+  if (mode === 'quick-check' && !canQuickCheck(card, schedule)) return 'recall-only';
   return null;
 }
 
@@ -54,6 +61,8 @@ export interface QueueOptions {
   size: number;
   /** null means every topic. */
   topics: string[] | null;
+  /** Quick-check sessions only take due cards that have options and are under the quick-check limit. */
+  mode?: PracticeMode;
 }
 
 /**
@@ -61,9 +70,14 @@ export interface QueueOptions {
  * Within each group sort by oldest due time (stable ID tie-break) and alternate
  * topics where the group allows it.
  */
-export function buildQueue(items: CardWithSchedule[], { now, size, topics }: QueueOptions): string[] {
+export function buildQueue(items: CardWithSchedule[], { now, size, topics, mode = 'recall' }: QueueOptions): string[] {
   const topicSet = topics ? new Set(topics) : null;
-  const eligible = items.filter(({ card, schedule }) => isDue(card, schedule, now) && (!topicSet || topicSet.has(card.topic)));
+  const eligible = items.filter(
+    ({ card, schedule }) =>
+      isDue(card, schedule, now) &&
+      (!topicSet || topicSet.has(card.topic)) &&
+      (mode === 'recall' || canQuickCheck(card, schedule)),
+  );
   const established = eligible.filter((i) => !isNew(i.schedule)).sort(byDueThenId);
   const fresh = eligible.filter((i) => isNew(i.schedule)).sort(byDueThenId);
 

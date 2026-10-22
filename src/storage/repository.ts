@@ -4,10 +4,12 @@
 
 import type { IDBPTransaction } from 'idb';
 import { validateRecord, type WorkspaceData } from '../content/backup';
+import { sameChoices, shuffledOptions } from '../domain/choices';
 import { newId } from '../domain/ids';
 import { duplicateKey, LIMITS, overLimitMessage, validateCardInput } from '../domain/limits';
 import { buildQueue, ineligibility } from '../domain/queue';
-import { applyRating, initialSchedule, snapshotOf } from '../domain/scheduler';
+import { applyQuickCheck, applyRating, initialSchedule, snapshotOf } from '../domain/scheduler';
+import { upgradeRecord } from '../domain/upgrade';
 import { browserTimeZone, isValidTimeZone } from '../domain/time';
 import type {
   Assessment,
@@ -15,7 +17,9 @@ import type {
   Card,
   CardContent,
   Confidence,
+  PracticeMode,
   Preferences,
+  QuickCheckResult,
   Rating,
   Reflection,
   Review,
@@ -119,6 +123,10 @@ export type CommitResult =
 export type AddCardsResult = { status: 'added'; cardIds: string[] } | { status: 'already-imported'; cardIds: string[] };
 
 type Tx<S extends StoreName[], M extends IDBTransactionMode> = IDBPTransaction<RecallSchema, S, M>;
+
+/** What a committed attempt records, by mode. */
+type ReviewOutcome =
+  { mode: 'recall'; rating: Rating; quickCheck: null } | { mode: 'quick-check'; rating: null; quickCheck: QuickCheckResult };
 
 const SESSION_STORES: ['cards', 'schedules', 'sessions', 'meta', 'outbox'] = ['cards', 'schedules', 'sessions', 'meta', 'outbox'];
 type SessionTx = Tx<typeof SESSION_STORES, 'readwrite'>;
@@ -422,7 +430,9 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
       let applied = 0;
       let ignored = 0;
       let clock = (clockRec.value as SyncClock).hlc;
-      for (const record of batch.records ?? []) {
+      for (const pulled of batch.records ?? []) {
+        // A server that predates quick checks may still hold records in the older shape.
+        const record = isSyncStore(pulled.store) ? { ...pulled, value: upgradeRecord(pulled.store, pulled.value) } : pulled;
         const store = record.store;
         if (
           !isSyncStore(store) ||
@@ -584,7 +594,8 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
         card.question !== clean.question ||
         card.answer !== clean.answer ||
         card.kind !== clean.kind ||
-        card.source !== clean.source;
+        card.source !== clean.source ||
+        !sameChoices(card.choices, clean.choices);
       if (!changed) return card;
       const next: Card = { ...card, ...clean, contentVersion: card.contentVersion + 1, updatedAt: now };
       await tx.objectStore('cards').put(next);
@@ -645,6 +656,29 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
     return { session, card: card ?? null, schedule: schedule ?? null };
   }
 
+  /** A fresh attempt. Quick-check options are shuffled once here, so a reload keeps their order. */
+  function newAttempt(
+    card: Card,
+    schedule: Schedule,
+    mode: PracticeMode,
+    now: number,
+    draft: { response: string; confidence: Confidence | null } = { response: '', confidence: null },
+  ): Attempt {
+    return {
+      id: newId(),
+      cardId: card.id,
+      cardVersion: card.contentVersion,
+      expectedStateVersion: schedule.stateVersion,
+      response: draft.response,
+      confidence: draft.confidence,
+      revealed: false,
+      startedAt: now,
+      revealedAt: null,
+      options: mode === 'quick-check' && card.choices ? shuffledOptions(card.choices, Math.random) : null,
+      picked: null,
+    };
+  }
+
   function skip(session: Session, cardId: string, reason: SkipReason, now: number) {
     session.results.push({ cardId, outcome: 'skipped', reviewId: null, rating: null, reason, at: now });
     session.index += 1;
@@ -659,22 +693,12 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
     while (session.index < session.queue.length) {
       const cardId = session.queue[session.index]!;
       const [card, schedule] = await Promise.all([tx.objectStore('cards').get(cardId), tx.objectStore('schedules').get(cardId)]);
-      const reason = ineligibility(card, schedule, now);
+      const reason = ineligibility(card, schedule, now, session.mode);
       if (reason || !card || !schedule) {
         skip(session, cardId, reason ?? 'deleted', now);
         continue;
       }
-      session.attempt = {
-        id: newId(),
-        cardId,
-        cardVersion: card.contentVersion,
-        expectedStateVersion: schedule.stateVersion,
-        response: '',
-        confidence: null,
-        revealed: false,
-        startedAt: now,
-        revealedAt: null,
-      };
+      session.attempt = newAttempt(card, schedule, session.mode, now);
       return { session, card, schedule };
     }
     session.status = 'completed';
@@ -694,7 +718,13 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
     return (await d.get('sessions', id)) ?? null;
   }
 
-  async function startSession(opts: { topics: string[] | null; size: number; now: number }): Promise<StartResult> {
+  async function startSession(opts: {
+    topics: string[] | null;
+    size: number;
+    now: number;
+    mode?: PracticeMode;
+  }): Promise<StartResult> {
+    const mode = opts.mode ?? 'recall';
     return run(SESSION_STORES, 'readwrite', async (tx) => {
       const active = await tx.objectStore('sessions').index('byStatus').getAll('active');
       if (active[0]) return { status: 'active-exists', session: active[0] };
@@ -704,10 +734,11 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
         const schedule = byId.get(card.id);
         return schedule ? [{ card, schedule }] : [];
       });
-      const queue = buildQueue(items, { now: opts.now, size: opts.size, topics: opts.topics });
+      const queue = buildQueue(items, { now: opts.now, size: opts.size, topics: opts.topics, mode });
       if (queue.length === 0) return { status: 'empty' };
       const session: Session = {
         id: newId(),
+        mode,
         topics: opts.topics,
         size: opts.size,
         queue,
@@ -775,6 +806,7 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
       const session = await tx.objectStore('sessions').get(sessionId);
       const attempt = matchAttempt(session, attemptId);
       if (!session || !attempt) return session ? loadState(tx, session) : null;
+      if (attempt.options) throw new ValidationError('This is a quick check. Pick an option instead.');
       if (!attempt.revealed) {
         session.attempt = { ...attempt, response: draft.response, confidence: draft.confidence, revealed: true, revealedAt: now };
         await tx.objectStore('sessions').put(session);
@@ -783,12 +815,57 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
     });
   }
 
+  /** Freeze a quick-check pick and show the result. The first pick for an attempt stands. */
+  async function pickOption(sessionId: string, attemptId: string, picked: number, now: number): Promise<PracticeState | null> {
+    return run(SESSION_STORES, 'readwrite', async (tx) => {
+      const session = await tx.objectStore('sessions').get(sessionId);
+      const attempt = matchAttempt(session, attemptId);
+      if (!session || !attempt) return session ? loadState(tx, session) : null;
+      if (!attempt.options) throw new ValidationError('This card is a full recall. Reveal the answer instead.');
+      if (!Number.isInteger(picked) || picked < 0 || picked >= attempt.options.length) {
+        throw new ValidationError('Choose one of the options.');
+      }
+      if (!attempt.revealed) {
+        session.attempt = { ...attempt, picked, revealed: true, revealedAt: now };
+        await tx.objectStore('sessions').put(session);
+      }
+      return loadState(tx, session);
+    });
+  }
+
+  /** Commit a self-rating for a revealed full-recall attempt. */
+  function commitReview(sessionId: string, attemptId: string, rating: Rating, now: number): Promise<CommitResult> {
+    return commitAttempt(sessionId, attemptId, 'recall', now, (_attempt, _card, schedule) => ({
+      after: applyRating(schedule, rating, now),
+      outcome: { mode: 'recall', rating, quickCheck: null },
+    }));
+  }
+
+  /** Commit a picked quick check. Whether the pick was correct is decided here, against the card. */
+  function commitQuickCheck(sessionId: string, attemptId: string, now: number): Promise<CommitResult> {
+    return commitAttempt(sessionId, attemptId, 'quick-check', now, (attempt, card, schedule) => {
+      const options = attempt.options!;
+      const picked = attempt.picked!;
+      const correct = card.choices !== null && options[picked] === card.choices.correct;
+      return {
+        after: applyQuickCheck(schedule, correct, now),
+        outcome: { mode: 'quick-check', rating: null, quickCheck: { options, picked, correct } },
+      };
+    });
+  }
+
   /**
-   * Commit a rating: insert the review, advance the schedule, and move the
+   * Commit an attempt: insert the review, advance the schedule, and move the
    * session forward in one transaction. The attempt ID is the idempotency key,
    * and the schedule's stateVersion guards against concurrent reviews.
    */
-  async function commitReview(sessionId: string, attemptId: string, rating: Rating, now: number): Promise<CommitResult> {
+  async function commitAttempt(
+    sessionId: string,
+    attemptId: string,
+    mode: PracticeMode,
+    now: number,
+    settle: (attempt: Attempt, card: Card, schedule: Schedule) => { after: Schedule; outcome: ReviewOutcome },
+  ): Promise<CommitResult> {
     return run(['cards', 'schedules', 'sessions', 'reviews', 'meta', 'outbox'], 'readwrite', async (tx) => {
       const sessionTx = tx as unknown as SessionTx;
       const existing = await tx.objectStore('reviews').get(attemptId);
@@ -804,7 +881,14 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
       if (!session || !attempt) {
         return { status: 'stale', reason: 'session-changed', state: session ? await loadState(sessionTx, session) : null };
       }
-      if (!attempt.revealed) throw new ValidationError('Reveal the answer before rating.');
+      if ((attempt.options !== null) !== (mode === 'quick-check')) {
+        throw new ValidationError(
+          mode === 'recall' ? 'A quick check has no self-rating.' : 'This card is a full recall. Rate it instead.',
+        );
+      }
+      if (!attempt.revealed || (mode === 'quick-check' && attempt.picked === null)) {
+        throw new ValidationError(mode === 'recall' ? 'Reveal the answer before rating.' : 'Pick an option before continuing.');
+      }
 
       const [card, schedule] = await Promise.all([
         tx.objectStore('cards').get(attempt.cardId),
@@ -816,27 +900,41 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
       if (schedule.stateVersion !== attempt.expectedStateVersion) return { status: 'stale', reason: 'reviewed-elsewhere', state };
       if (card.contentVersion !== attempt.cardVersion) return { status: 'stale', reason: 'edited', state };
 
-      const after = applyRating(schedule, rating, now);
+      const { after, outcome } = settle(attempt, card, schedule);
       const review: Review = {
+        ...outcome,
         id: attempt.id,
         cardId: card.id,
         cardVersion: card.contentVersion,
         sessionId: session.id,
         response: attempt.response,
         confidence: attempt.confidence,
-        rating,
         before: snapshotOf(schedule),
         after: snapshotOf(after),
         schedulerVersion: after.schedulerVersion,
         startedAt: attempt.startedAt,
         revealedAt: attempt.revealedAt,
         committedAt: now,
-        snapshot: { topic: card.topic, question: card.question, answer: card.answer, kind: card.kind, source: card.source },
+        snapshot: {
+          topic: card.topic,
+          question: card.question,
+          answer: card.answer,
+          kind: card.kind,
+          source: card.source,
+          choices: card.choices,
+        },
       };
       // `add` (not `put`) so a second insert with the same key fails the whole transaction.
       await tx.objectStore('reviews').add(review);
       await tx.objectStore('schedules').put(after);
-      session.results.push({ cardId: card.id, outcome: 'reviewed', reviewId: review.id, rating, reason: null, at: now });
+      session.results.push({
+        cardId: card.id,
+        outcome: 'reviewed',
+        reviewId: review.id,
+        rating: review.rating,
+        reason: null,
+        at: now,
+      });
       session.index += 1;
       session.attempt = null;
       const next = await advance(sessionTx, session, now);
@@ -858,6 +956,7 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
     return {
       session: {
         id: review.sessionId ?? '',
+        mode: review.mode,
         topics: null,
         size: 0,
         queue: [],
@@ -904,7 +1003,7 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
         tx.objectStore('cards').get(attempt.cardId),
         tx.objectStore('schedules').get(attempt.cardId),
       ]);
-      let reason = ineligibility(card, schedule, now);
+      let reason = ineligibility(card, schedule, now, session.mode);
       if (!reason && schedule && schedule.stateVersion !== attempt.expectedStateVersion) reason = 'reviewed-elsewhere';
       if (reason || !card || !schedule) {
         skip(session, attempt.cardId, reason ?? 'deleted', now);
@@ -913,17 +1012,7 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
         await markSession(tx, session, now);
         return state;
       }
-      session.attempt = {
-        id: newId(),
-        cardId: card.id,
-        cardVersion: card.contentVersion,
-        expectedStateVersion: schedule.stateVersion,
-        response: attempt.response,
-        confidence: attempt.confidence,
-        revealed: false,
-        startedAt: now,
-        revealedAt: null,
-      };
+      session.attempt = newAttempt(card, schedule, session.mode, now, attempt);
       await tx.objectStore('sessions').put(session);
       return { session, card, schedule };
     });
@@ -1055,7 +1144,9 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
     ensureAttempt,
     saveDraft,
     reveal,
+    pickOption,
     commitReview,
+    commitQuickCheck,
     skipCurrent,
     refreshAttempt,
     endSession,

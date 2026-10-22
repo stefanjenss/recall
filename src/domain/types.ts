@@ -9,8 +9,23 @@ export const RATINGS: readonly Rating[] = [1, 2, 3, 4];
 export type Confidence = 'unsure' | 'somewhat' | 'confident';
 export const CONFIDENCE_LEVELS: readonly Confidence[] = ['unsure', 'somewhat', 'confident'];
 
-export const SCHEDULER_VERSION = 'recall-sm2-v1';
+/** v2 keeps every v1 rating rule and adds the quick-check rule (docs/PRD.md section 8). */
+export const SCHEDULER_VERSION = 'recall-sm2-v2';
 export type SchedulerVersion = typeof SCHEDULER_VERSION;
+
+/** Full recall: answer from memory and self-rate. Quick check: pick from multiple-choice options. */
+export type PracticeMode = 'recall' | 'quick-check';
+export const PRACTICE_MODES: readonly PracticeMode[] = ['recall', 'quick-check'];
+
+/**
+ * Optional multiple-choice options for quick checks. The reference answer
+ * stays the full explanation; `correct` is its short multiple-choice form.
+ */
+export interface CardChoices {
+  correct: string;
+  /** One to three wrong options. */
+  distractors: string[];
+}
 
 export interface Card {
   id: string;
@@ -19,6 +34,7 @@ export interface Card {
   answer: string;
   kind: CardKind;
   source: string | null;
+  choices: CardChoices | null;
   /** Incremented on every content edit so attempts keep the version they answered. */
   contentVersion: number;
   createdAt: number;
@@ -34,6 +50,7 @@ export interface CardContent {
   answer: string;
   kind: CardKind;
   source: string | null;
+  choices: CardChoices | null;
 }
 
 export interface Schedule {
@@ -48,6 +65,8 @@ export interface Schedule {
   /** Optimistic-concurrency token. Incremented on every schedule change. */
   stateVersion: number;
   lastReviewedAt: number | null;
+  /** Quick checks since the last full-recall review. At the limit, only full recall is allowed. */
+  quickChecksSinceRecall: number;
 }
 
 export interface ScheduleSnapshot {
@@ -59,7 +78,15 @@ export interface ScheduleSnapshot {
   stateVersion: number;
 }
 
-export interface Review {
+export interface QuickCheckResult {
+  /** The options in the order they were shown. */
+  options: string[];
+  /** Index into `options` of the learner's pick. */
+  picked: number;
+  correct: boolean;
+}
+
+interface ReviewBase {
   /** Equal to the attempt ID; doubles as the idempotency key. */
   id: string;
   cardId: string;
@@ -67,16 +94,32 @@ export interface Review {
   sessionId: string | null;
   response: string;
   confidence: Confidence | null;
-  rating: Rating;
   before: ScheduleSnapshot;
   after: ScheduleSnapshot;
-  schedulerVersion: SchedulerVersion;
+  /** The scheduler that computed `after`. Reviews from before quick checks keep "recall-sm2-v1". */
+  schedulerVersion: string;
   startedAt: number;
   revealedAt: number | null;
   committedAt: number;
   /** Content as it was answered, so history survives edits and deletion. */
   snapshot: CardContent;
 }
+
+export interface RecallReview extends ReviewBase {
+  mode: 'recall';
+  /** Self-reported. */
+  rating: Rating;
+  quickCheck: null;
+}
+
+/** A multiple-choice check: graded by the pick, with no self-rating. */
+export interface QuickCheckReview extends ReviewBase {
+  mode: 'quick-check';
+  rating: null;
+  quickCheck: QuickCheckResult;
+}
+
+export type Review = RecallReview | QuickCheckReview;
 
 export interface Attempt {
   id: string;
@@ -85,12 +128,19 @@ export interface Attempt {
   expectedStateVersion: number;
   response: string;
   confidence: Confidence | null;
+  /** For a quick check, true once an option is picked. */
   revealed: boolean;
   startedAt: number;
   revealedAt: number | null;
+  /** Quick check only: the options in display order (shuffled once, so a reload keeps the order). */
+  options: string[] | null;
+  /** Quick check only: index into `options` of the pick. */
+  picked: number | null;
 }
 
-export type SkipReason = 'deleted' | 'paused' | 'not-due' | 'reviewed-elsewhere';
+/** `recall-only`: a quick-check session card that lost its options or reached the quick-check limit. */
+export type SkipReason = 'deleted' | 'paused' | 'not-due' | 'reviewed-elsewhere' | 'recall-only';
+export const SKIP_REASONS: readonly SkipReason[] = ['deleted', 'paused', 'not-due', 'reviewed-elsewhere', 'recall-only'];
 
 export interface SessionResult {
   cardId: string;
@@ -105,6 +155,7 @@ export type SessionStatus = 'active' | 'completed' | 'ended';
 
 export interface Session {
   id: string;
+  mode: PracticeMode;
   /** null means all topics. */
   topics: string[] | null;
   size: number;
@@ -195,6 +246,16 @@ export const RATING_DESCRIPTIONS: Record<Rating, string> = {
   2: 'Partly, with effort',
   3: 'Recalled it',
   4: 'Instantly',
+};
+
+export const MODE_LABELS: Record<PracticeMode, string> = {
+  recall: 'Full recall',
+  'quick-check': 'Quick check',
+};
+
+export const MODE_DESCRIPTIONS: Record<PracticeMode, string> = {
+  recall: 'Answer from memory, then rate yourself',
+  'quick-check': 'Multiple choice · recognition, not recall',
 };
 
 export const CONFIDENCE_LABELS: Record<Confidence, string> = {

@@ -102,8 +102,8 @@ test('sync API requests always go to the server, never through the offline cache
 
   // The preview server has no API, but the worker must still leave these alone.
   const [apiResponse] = await Promise.all([
-    page.waitForResponse((r) => r.url().includes('/api/sync/v1/info')),
-    page.evaluate(() => fetch('./api/sync/v1/info', { cache: 'no-store' }).catch(() => null)),
+    page.waitForResponse((r) => r.url().includes('/api/sync/v2/info')),
+    page.evaluate(() => fetch('./api/sync/v2/info', { cache: 'no-store' }).catch(() => null)),
   ]);
   expect(apiResponse.fromServiceWorker(), 'API fetch answered by the worker').toBe(false);
   const opened = await page.goto('./api/health');

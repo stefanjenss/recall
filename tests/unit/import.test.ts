@@ -23,6 +23,7 @@ function existingCard(question: string, topic = 'SQL'): Card {
     answer: 'a',
     kind: 'recall',
     source: null,
+    choices: null,
     contentVersion: 1,
     createdAt: NOW,
     updatedAt: NOW,
@@ -63,8 +64,8 @@ describe('JSON import', () => {
     const plan = planImport(drafts, checks);
     expect(plan.ready).toBe(true);
     expect(plan.toAdd).toHaveLength(2);
-    expect(plan.toAdd[0]).toEqual({ ...cards[0], kind: 'apply' });
-    expect(plan.toAdd[1]).toEqual(cards[1]);
+    expect(plan.toAdd[0]).toEqual({ ...cards[0], kind: 'apply', choices: null });
+    expect(plan.toAdd[1]).toEqual({ ...cards[1], choices: null });
   });
 
   it('round-trips the app’s own content export', () => {
@@ -75,13 +76,15 @@ describe('JSON import', () => {
       const drafts = toDrafts(parseOk(JSON.stringify(exported)).rows);
       return planImport(drafts, checkDrafts(drafts, []));
     })();
-    expect(plan.toAdd).toEqual([{ topic: 'SQL', question: 'Q1', answer: 'line 1\nline 2', kind: 'recall', source: 'src' }]);
+    expect(plan.toAdd).toEqual([
+      { topic: 'SQL', question: 'Q1', answer: 'line 1\nline 2', kind: 'recall', source: 'src', choices: null },
+    ]);
   });
 
   it('accepts a bare array and applies defaults for topic and kind', () => {
     const drafts = toDrafts(parseOk('[{"question":"Q","answer":"A"}]').rows);
     const [check] = checkDrafts(drafts, []);
-    expect(check!.content).toEqual({ topic: 'General', question: 'Q', answer: 'A', kind: 'recall', source: null });
+    expect(check!.content).toEqual({ topic: 'General', question: 'Q', answer: 'A', kind: 'recall', source: null, choices: null });
   });
 
   it('AC03: one invalid row makes the batch not ready and identifies the row', () => {
@@ -139,8 +142,8 @@ describe('TSV import', () => {
     expect(parsed.notes).toContain('Skipped the header row.');
     const checks = checkDrafts(toDrafts(parsed.rows), []);
     expect(checks.map((c) => c.content)).toEqual([
-      { topic: 'Math', question: 'What is 2+2?', answer: '4', kind: 'recall', source: null },
-      { topic: 'General', question: 'Capital of France?', answer: 'Paris', kind: 'recall', source: null },
+      { topic: 'Math', question: 'What is 2+2?', answer: '4', kind: 'recall', source: null, choices: null },
+      { topic: 'General', question: 'Capital of France?', answer: 'Paris', kind: 'recall', source: null, choices: null },
     ]);
   });
 
@@ -195,5 +198,55 @@ describe('limits', () => {
       { start: 100, end: 200 },
       { start: 200, end: 250 },
     ]);
+  });
+});
+
+describe('multiple-choice options', () => {
+  const base = { question: 'Q', answer: 'A' };
+  const choicesOf = (choices: unknown) => validateCardInput({ ...base, choices });
+
+  it('imports options with the card and keeps them through a content export', () => {
+    const choices = { correct: 'Right', distractors: ['Wrong 1', 'Wrong 2', 'Wrong 3'] };
+    const drafts = toDrafts(parseOk(JSON.stringify({ format: 'recall-v1', cards: [{ ...base, choices }] })).rows);
+    const plan = planImport(drafts, checkDrafts(drafts, []));
+    expect(plan.ready).toBe(true);
+    expect(plan.toAdd[0]!.choices).toEqual(choices);
+
+    const exported = buildContentExport([{ ...existingCard('Q2'), choices }], NOW);
+    const again = toDrafts(parseOk(JSON.stringify(exported)).rows);
+    expect(planImport(again, checkDrafts(again, [])).toAdd[0]!.choices).toEqual(choices);
+  });
+
+  it('trims options, drops blank wrong options, and treats all-blank options as none', () => {
+    expect(choicesOf({ correct: '  Right ', distractors: [' Wrong ', '', '   '] }).value?.choices).toEqual({
+      correct: 'Right',
+      distractors: ['Wrong'],
+    });
+    expect(choicesOf({ correct: ' ', distractors: ['', ''] }).value?.choices).toBeNull();
+    expect(choicesOf(null).value?.choices).toBeNull();
+    expect(choicesOf(undefined).value?.choices).toBeNull();
+  });
+
+  it('rejects incomplete, duplicate, oversized, or malformed options with a field-specific message', () => {
+    const message = (choices: unknown) => choicesOf(choices).errors.find((e) => e.field === 'choices')?.message;
+    expect(message({ correct: '', distractors: ['Wrong'] })).toMatch(/Add the correct option/);
+    expect(message({ correct: 'Right', distractors: [] })).toMatch(/at least one wrong option/);
+    expect(message({ correct: 'Right', distractors: ['a', 'b', 'c', 'd'] })).toMatch(/at most 3 wrong options; found 4/);
+    expect(message({ correct: 'Right', distractors: ['right ', 'Other'] })).toMatch(/must be different/);
+    expect(message({ correct: 'x'.repeat(501), distractors: ['Wrong'] })).toMatch(/correct option is 501 characters/);
+    expect(message('Right')).toMatch(/must be an object/);
+    expect(message({ correct: 'Right', distractors: 'Wrong' })).toMatch(/must be a list of text/);
+    expect(message({ correct: 3, distractors: ['Wrong'] })).toMatch(/must be text/);
+    expect(choicesOf({ correct: '', distractors: ['Wrong'] }).value).toBeNull();
+  });
+
+  it('marks an import batch with bad options as not ready, naming the card', () => {
+    const drafts = toDrafts(
+      parseOk(JSON.stringify([{ ...base, choices: { correct: 'Right', distractors: ['a', 'b', 'c', 'd'] } }])).rows,
+    );
+    const checks = checkDrafts(drafts, []);
+    expect(planImport(drafts, checks).ready).toBe(false);
+    expect(drafts[0]!.label).toBe('Card 1');
+    expect(checks[0]!.errors[0]!.field).toBe('choices');
   });
 });

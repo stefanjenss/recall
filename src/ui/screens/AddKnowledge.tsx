@@ -146,6 +146,10 @@ function WriteCard() {
           <li>Ask for production, not recognition: “Explain…”, “When would you…”, “What’s the difference…”.</li>
           <li>Mix kinds. Apply and Compare cards make you choose an approach, not just recall a definition.</li>
           <li>Keep answers short enough to check in a glance; add an example where it helps.</li>
+          <li>
+            Multiple-choice options are optional, for quick checks. Make the wrong options plausible and about as long as the
+            right one, so the answer can’t be spotted by its shape.
+          </li>
         </ul>
         <p>
           Want examples first?{' '}
@@ -528,6 +532,7 @@ function DraftRow({
       <p className="draft__meta">
         {values.topic.trim() || 'General'} · {KIND_LABELS[values.kind as keyof typeof KIND_LABELS] ?? values.kind}
         {values.source.trim() ? ' · has source' : ''}
+        {values.choices.correct.trim() ? ' · multiple choice' : ''}
       </p>
       {!draft.removed && check.rowError ? <p className="field__error">{check.rowError}</p> : null}
       {!draft.removed && check.errors.length > 0 ? (

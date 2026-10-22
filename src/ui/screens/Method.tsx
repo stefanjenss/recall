@@ -1,3 +1,4 @@
+import { QUICK_CHECK_LIMIT } from '../../domain/scheduler';
 import { PageHeader } from '../components/common';
 
 export const LEARNING_NOTES = [
@@ -100,7 +101,7 @@ export function Method() {
           How scheduling works
         </h2>
         <p className="prose">
-          Recall uses its own simple rules, called <code>recall-sm2-v1</code>. They’re inspired by the classic SM-2 approach but
+          Recall uses its own simple rules, called <code>recall-sm2-v2</code>. They’re inspired by the classic SM-2 approach but
           are not Anki’s algorithm, not FSRS, and not a prescription from the book. Each card tracks an interval (I, in days), an
           ease (E, starting at 2.5), and how many times you’ve reviewed it (R).
         </p>
@@ -147,6 +148,33 @@ export function Method() {
             A card rated Again isn’t repeated in the same session; it becomes due again 10 minutes later for your next session.
           </li>
           <li>Due times are never pulled forward to give you more to do. Being caught up is fine.</li>
+          <li>
+            Version 2 added the quick-check rule below. Every rating rule above is unchanged from version 1,{' '}
+            <code>recall-sm2-v1</code>.
+          </li>
+        </ul>
+      </section>
+
+      <section className="section" aria-labelledby="quick-check-title">
+        <h2 id="quick-check-title" className="section__title">
+          Quick checks
+        </h2>
+        <p className="prose">
+          On a low-energy day, choose Quick check on Today. Cards that have multiple-choice options show them instead of an answer
+          box, and your pick is checked for you. It keeps the habit going and catches what you’ve forgotten. But recognizing an
+          answer is easier than producing it, so a quick check counts for less than a full recall:
+        </p>
+        <ul className="prose">
+          <li>
+            A correct pick brings the card back in 1 day, or 2 once its interval is at least 2 days. Its interval, ease, and
+            review count don’t change, so a lucky guess can’t push a card further out.
+          </li>
+          <li>A wrong pick counts as Again: the card returns in 10 minutes with the same ease penalty.</li>
+          <li>
+            After {QUICK_CHECK_LIMIT} quick checks in a row, a card waits for a full recall. Any full-recall review resets the
+            count.
+          </li>
+          <li>Progress reports quick checks on their own line. They aren’t self-ratings and never lengthen an interval.</li>
         </ul>
       </section>
 
@@ -160,6 +188,10 @@ export function Method() {
             something. The real test is whether you can produce and use the idea later.
           </li>
           <li>The interval rules and session defaults are design choices, not measured optima.</li>
+          <li>
+            Multiple-choice options can make a card feel easier than it is, and a wrong option you pick can stick. Quick checks
+            supplement recall; they don’t replace it.
+          </li>
           <li>
             Recall doesn’t grade your answers with AI in this version. You compare your answer with the reference and rate it
             yourself.

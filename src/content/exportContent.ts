@@ -8,8 +8,8 @@ export interface ContentExport {
 }
 
 /**
- * Content-only export (recall-v1): topic, question, answer, kind, source.
- * It deliberately carries no schedules or review history.
+ * Content-only export (recall-v1): topic, question, answer, kind, source, and
+ * multiple-choice options. It deliberately carries no schedules or review history.
  */
 export function buildContentExport(cards: Card[], now: number): ContentExport {
   return {
@@ -18,7 +18,7 @@ export function buildContentExport(cards: Card[], now: number): ContentExport {
     note: 'Content only. Schedules and review history are not included; imported cards start as new.',
     cards: cards
       .filter((c) => c.deletedAt === null)
-      .map(({ topic, question, answer, kind, source }) => ({ topic, question, answer, kind, source })),
+      .map(({ topic, question, answer, kind, source, choices }) => ({ topic, question, answer, kind, source, choices })),
   };
 }
 

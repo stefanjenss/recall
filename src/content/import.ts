@@ -60,7 +60,7 @@ export function parseImportText(text: string, fileName?: string): ParseResult {
   return format === 'json' ? parseJson(clean) : parseTsv(clean);
 }
 
-const KNOWN_FIELDS = ['topic', 'question', 'answer', 'kind', 'source'] as const;
+const KNOWN_FIELDS = ['topic', 'question', 'answer', 'kind', 'source', 'choices'] as const;
 
 function parseJson(text: string): ParseResult {
   let value: unknown;

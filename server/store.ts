@@ -11,6 +11,7 @@ import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import type { WorkspaceData } from '../src/content/backup';
 import type { Preferences } from '../src/domain/types';
+import { upgradeRecord } from '../src/domain/upgrade';
 import { mergeRecord } from '../src/sync/merge';
 import {
   SYNC_PROTOCOL,
@@ -21,7 +22,7 @@ import {
   type SyncStore,
 } from '../src/sync/protocol';
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 interface Row {
   store: string;
@@ -233,5 +234,24 @@ function migrate(db: DatabaseSync) {
       ) WITHOUT ROWID;
       PRAGMA user_version = 1;
     `);
+  }
+  if (version < 2) {
+    // Quick checks: rewrite stored records in the current shape, with the same
+    // upgrades devices apply to their own storage. Values change in place, without
+    // a new sequence number: every device upgrades its copy identically.
+    const rows = db.prepare('SELECT store, key, value FROM records').all() as Array<Pick<Row, 'store' | 'key' | 'value'>>;
+    const update = db.prepare('UPDATE records SET value = ? WHERE store = ? AND key = ?');
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      for (const row of rows) {
+        const value = JSON.stringify(upgradeRecord(row.store, JSON.parse(row.value)));
+        if (value !== row.value) update.run(value, row.store, row.key);
+      }
+      db.exec('PRAGMA user_version = 2');
+      db.exec('COMMIT');
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    }
   }
 }

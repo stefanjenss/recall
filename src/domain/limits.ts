@@ -1,4 +1,4 @@
-import { CARD_KINDS, type CardContent, type CardKind } from './types';
+import { CARD_KINDS, type CardChoices, type CardContent, type CardKind } from './types';
 
 export const LIMITS = {
   topic: 100,
@@ -7,7 +7,12 @@ export const LIMITS = {
   source: 1000,
   response: 10_000,
   reflection: 5000,
+  /** Each multiple-choice option. */
+  choice: 500,
 } as const;
+
+/** Quick checks show the correct option and one to three wrong ones. */
+export const MAX_DISTRACTORS = 3;
 
 export const DEFAULT_TOPIC = 'General';
 export const DEFAULT_KIND: CardKind = 'recall';
@@ -42,6 +47,7 @@ export interface CardInput {
   answer?: unknown;
   kind?: unknown;
   source?: unknown;
+  choices?: unknown;
 }
 
 const FIELD_LABELS: Record<CardField, string> = {
@@ -50,6 +56,7 @@ const FIELD_LABELS: Record<CardField, string> = {
   answer: 'Answer',
   kind: 'Kind',
   source: 'Source',
+  choices: 'Options',
 };
 
 export function parseKind(value: unknown): CardKind | null {
@@ -57,6 +64,47 @@ export function parseKind(value: unknown): CardKind | null {
   if (typeof value !== 'string') return null;
   const lower = value.trim().toLowerCase();
   return (CARD_KINDS as readonly string[]).includes(lower) ? (lower as CardKind) : null;
+}
+
+/**
+ * Multiple-choice options: `{ correct, distractors }`. Options are trimmed and
+ * blank wrong options are dropped; options left entirely blank mean "none".
+ */
+function parseChoices(value: unknown, errors: FieldError[]): CardChoices | null {
+  if (value === undefined || value === null) return null;
+  const fail = (message: string) => {
+    errors.push({ field: 'choices', message });
+    return null;
+  };
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    return fail('Options must be an object with a "correct" option and a "distractors" list of wrong options.');
+  }
+  const { correct, distractors } = value as { correct?: unknown; distractors?: unknown };
+  if (correct !== undefined && correct !== null && typeof correct !== 'string') return fail('The correct option must be text.');
+  if (
+    distractors !== undefined &&
+    distractors !== null &&
+    (!Array.isArray(distractors) || distractors.some((d) => typeof d !== 'string'))
+  ) {
+    return fail('Wrong options ("distractors") must be a list of text.');
+  }
+  const right = (correct ?? '').trim();
+  const wrong = ((distractors ?? []) as string[]).map((d) => d.trim()).filter((d) => d !== '');
+  if (right === '' && wrong.length === 0) return null;
+  if (right === '') return fail('Add the correct option, or clear the wrong ones.');
+  if (wrong.length === 0) return fail('Add at least one wrong option, or clear the correct one.');
+  if (wrong.length > MAX_DISTRACTORS) return fail(`Use at most ${MAX_DISTRACTORS} wrong options; found ${wrong.length}.`);
+  const tooLong = [
+    overLimitMessage('The correct option', right, LIMITS.choice),
+    ...wrong.map((w, i) => overLimitMessage(`Wrong option ${i + 1}`, w, LIMITS.choice)),
+  ].filter((m): m is string => m !== null);
+  if (tooLong.length > 0) {
+    for (const message of tooLong) errors.push({ field: 'choices', message });
+    return null;
+  }
+  const options = [right, ...wrong];
+  if (new Set(options.map(duplicateKey)).size !== options.length) return fail('Each option must be different.');
+  return { correct: right, distractors: wrong };
 }
 
 /**
@@ -78,6 +126,7 @@ export function validateCardInput(input: CardInput): { value: CardContent | null
   const answer = text('answer', input.answer);
   const sourceRaw = text('source', input.source);
   const kind = parseKind(input.kind);
+  const choices = parseChoices(input.choices, errors);
 
   const topic = topicRaw === null ? null : topicRaw.trim() || DEFAULT_TOPIC;
   const source = sourceRaw === null ? null : sourceRaw.trim() || null;
@@ -104,7 +153,7 @@ export function validateCardInput(input: CardInput): { value: CardContent | null
   if (errors.length > 0 || topic === null || question === null || answer === null || kind === null) {
     return { value: null, errors };
   }
-  return { value: { topic, question, answer, kind, source }, errors };
+  return { value: { topic, question, answer, kind, source, choices }, errors };
 }
 
 /** Normalised question text used for duplicate warnings. */

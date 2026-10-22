@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef, type CSSProperties, type ReactNode } from 'react';
-import { isHttpUrl, renderInlineMarkdown, renderMarkdown } from '../markdown';
+import { isHttpUrl, renderInlineMarkdown, renderMarkdown, renderOptionMarkdown } from '../markdown';
 
 export function PageHeader({ title, kicker, children }: { title: string; kicker?: ReactNode; children?: ReactNode }) {
   return (
@@ -45,6 +45,12 @@ export function Notice({
 export function Markdown({ source, className = '' }: { source: string; className?: string }) {
   const html = useMemo(() => renderMarkdown(source), [source]);
   return <div className={`prose ${className}`} dangerouslySetInnerHTML={{ __html: html }} />;
+}
+
+/** A multiple-choice option: inline code and emphasis, no links (options can sit inside buttons). */
+export function OptionText({ source, className }: { source: string; className?: string }) {
+  const html = useMemo(() => renderOptionMarkdown(source), [source]);
+  return <span className={className} dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
 export function SourceLine({ source }: { source: string | null }) {

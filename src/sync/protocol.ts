@@ -8,9 +8,17 @@
 import { validateRecord } from '../content/backup';
 import { isHlc } from './hlc';
 
-export const SYNC_PROTOCOL = 1;
+/**
+ * Protocol 2 carries quick-check record shapes (card options, review modes,
+ * recall-sm2-v2 schedules). The version is part of the API path, so a device
+ * and a server on different protocols refuse each other's requests outright
+ * instead of rejecting, and then dropping, records the other can't read.
+ */
+export const SYNC_PROTOCOL = 2;
 /** Relative to the server's base URL. */
-export const SYNC_API_PATH = 'api/sync/v1/';
+export const SYNC_API_PATH = `api/sync/v${SYNC_PROTOCOL}/`;
+/** Every sync API version lives under this path. */
+export const SYNC_API_ROOT = 'api/sync/';
 export const SERVER_ID_HEADER = 'X-Recall-Server';
 
 export const SYNC_STORES = [

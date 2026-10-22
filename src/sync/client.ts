@@ -4,6 +4,7 @@
 import {
   SERVER_ID_HEADER,
   SYNC_API_PATH,
+  SYNC_PROTOCOL,
   type ErrorBody,
   type PullResponse,
   type PushResponse,
@@ -108,6 +109,13 @@ export function createSyncClient(opts: { url: string; key: string; serverId?: st
         throw new SyncError('server-changed', message ?? "The server's data was replaced or reset. Reconnect this device.");
       }
       if (code === 'clock-ahead') throw new SyncError('clock-ahead', message ?? "This device's clock is ahead of the server's.");
+      if (response.status === 404 && code === 'not-found') {
+        // A Recall server that predates this protocol answers every request on this path with not-found.
+        throw new SyncError(
+          'server',
+          `The sync server doesn't speak sync protocol ${SYNC_PROTOCOL} yet. Update the server to this version of Recall; changes stay on this device until then.`,
+        );
+      }
       if (code === undefined) {
         throw new SyncError('server', `That address answered with HTTP ${response.status}, not like a Recall sync server.`);
       }
@@ -123,10 +131,10 @@ export function createSyncClient(opts: { url: string; key: string; serverId?: st
       if (info?.app !== 'recall-sync' || typeof info.serverId !== 'string') {
         throw new SyncError('server', "That address didn't answer like a Recall sync server.");
       }
-      if (info.protocol !== 1) {
+      if (info.protocol !== SYNC_PROTOCOL) {
         throw new SyncError(
           'server',
-          `The server speaks sync protocol ${info.protocol}; this app needs protocol 1. Update both.`,
+          `The server speaks sync protocol ${info.protocol}; this app needs protocol ${SYNC_PROTOCOL}. Update both.`,
         );
       }
       return info;

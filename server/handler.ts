@@ -13,6 +13,9 @@ import {
   MAX_PULL_LIMIT,
   MAX_PUSH_CHANGES,
   SERVER_ID_HEADER,
+  SYNC_API_PATH,
+  SYNC_API_ROOT,
+  SYNC_PROTOCOL,
   type ErrorBody,
   type PullResponse,
   type PushResponse,
@@ -34,7 +37,8 @@ export interface HandlerOptions {
   log?: (line: string) => void;
 }
 
-const API = '/api/sync/v1/';
+const API = `/${SYNC_API_PATH}`;
+const ANY_SYNC_API = `/${SYNC_API_ROOT}`;
 
 const CONTENT_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -275,6 +279,14 @@ export function createHandler(options: HandlerOptions): (request: Request) => Pr
       }
       if (url.pathname.startsWith(API)) {
         return await api(request, url.pathname.slice(API.length), url);
+      }
+      if (url.pathname.startsWith(ANY_SYNC_API)) {
+        // An app built for another protocol. Refuse before reading anything, so nothing is half-applied.
+        throw new HttpError(
+          404,
+          'not-found',
+          `This sync server speaks protocol ${SYNC_PROTOCOL}, and this copy of Recall doesn't. Reload the page to update Recall; changes stay on this device until then.`,
+        );
       }
       if (url.pathname.startsWith('/api/')) throw new HttpError(404, 'not-found', 'No such endpoint.');
       return await serveStatic(request, url.pathname);

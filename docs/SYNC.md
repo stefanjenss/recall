@@ -170,6 +170,11 @@ so that changes the device hadn't uploaded yet are kept.
 Pull the new code, then run `docker compose up -d --build`, or `npm ci && npm run build && npm run build:server` and
 `sudo systemctl restart recall-sync`. Devices pick up the new app the next time they load the page.
 
+Some updates change the sync protocol, as quick checks did (protocol 2). Until the server and a device run the same
+protocol, that device's sync pauses with a message saying which one to update: the server, or the page (reload it).
+Nothing is lost meanwhile; each device keeps its changes and sends them once both match. The server upgrades its stored
+data on its first start after the update, and its backups use the new format.
+
 ### Delete the server's data
 
 Deleting data in a device's Settings removes only that device's copy and disconnects it. To delete the server's copy,

@@ -11,6 +11,12 @@ export async function startReview(page: Page) {
   await expect(page.getByRole('button', { name: /Reveal answer/ })).toBeVisible();
 }
 
+export async function startQuickCheck(page: Page) {
+  await page.getByRole('radio', { name: /Quick check/ }).check();
+  await page.getByRole('button', { name: /Start quick check/ }).click();
+  await expect(page.getByRole('heading', { name: 'Choose the best answer' })).toBeVisible();
+}
+
 export function cardPosition(page: Page) {
   return page.locator('.practice__progress p').first();
 }
