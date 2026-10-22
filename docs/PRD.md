@@ -115,7 +115,7 @@ Use accurate, self-contained cards with one primary learning objective. Break br
 4. Previews imported/generated cards, edits or removes drafts, and resolves errors.
 5. Saves the accepted cards. They become due immediately with initial scheduling state.
 
-The external-assistant path supplies a copyable prompt with a JSON schema, then a paste/file import step. It must work with any assistant able to return the schema. It must not depend on linking the app to a particular chat account.
+The external-assistant path supplies a copyable prompt with a JSON schema, then a paste/file import step. Add options follows the same path for cards that already exist (§7, Quick checks). It must work with any assistant able to return the schema. It must not depend on linking the app to a particular chat account.
 
 ### 6.2 Daily review
 
@@ -184,6 +184,7 @@ The owner often studies with an assistant that gives each question both a flashc
 
 - Cards may carry optional `choices`: one correct option (a one-line form of the answer) and one to three plausible wrong options, each up to 500 characters. The full reference answer remains the card's answer. Options are trimmed; blank wrong options are dropped; options must differ from each other.
 - Authoring, editing, import (JSON), content export, and the assistant prompt all support options. TSV import does not.
+- Existing cards can get options in bulk (Add knowledge → Add options), so a collection built before options existed can be quick-checked. The learner copies a prompt listing the cards that have no options (one topic or all, at most 100 per prompt), each with its ID, topic, question, and answer and the same option-writing guidance as the card prompt, then pastes back the assistant's `recall-options-v1` reply. Entries match cards by ID and are validated exactly like an edit. The preview shows each card's question, the proposed options, any error, and whether the card already has options; replacing a card's own options needs the learner's say-so, and any ready entry can be left out. Unknown or deleted IDs, repeats, errors, and empty entries are skipped with a note. Saving writes every included card in one transaction and changes only the options, as a content edit: questions, answers, and schedules stay as they are, and attempts in progress on those cards go stale. A card edited or deleted after the preview is left alone. Retrying a save changes nothing twice.
 - Today offers Full recall or Quick check for the session. A quick-check session takes only due cards that have options and are under the quick-check limit. Explain how many due cards qualify and why the others don't.
 - The options appear in an order shuffled once per attempt, so a reload keeps the order. The first pick counts and is frozen like a revealed answer. The result shows the correct option and the learner's pick with text and a mark, not color alone, followed by the full reference answer. Continue saves the result. Keys 1–4 pick and Space continues, under the same rules as recall shortcuts.
 - Scheduling follows §8's quick-check rule: a correct pick never lengthens the interval; a wrong pick is applied as Again; after two quick checks in a row the card needs a full recall.
@@ -411,8 +412,9 @@ If a card is edited, deleted, paused, or reviewed elsewhere during a session, re
 | AC24 | A card is quick-checked twice in a row | It's excluded from quick-check sessions until a full-recall review, which resets the count |
 | AC25 | A version 1 database is opened, or a version 1 backup restored | Every record is kept; cards have no options; schedules become recall-sm2-v2 with unchanged intervals; past reviews are recall reviews |
 | AC26 | Progress after quick checks | Quick checks are reported separately and excluded from self-rating shares |
+| AC27 | Options added to existing cards in bulk | Only the matched cards' options change, as a content edit; questions, answers, and schedules are unchanged; unknown or deleted IDs are skipped with a note; retrying the save changes nothing twice |
 
-AC01–18 and AC22 gate P0. AC23–26 gate quick checks. AC19–21 gate P1 embedded grading. Verify accessibility manually as well as with automated tooling. Proposed responsiveness target: ordinary local navigation/filtering remains under 200 ms with 5,000 cards on a modern desktop; test and report the device/data conditions rather than treating this as a proven benchmark.
+AC01–18 and AC22 gate P0. AC23–27 gate quick checks. AC19–21 gate P1 embedded grading. Verify accessibility manually as well as with automated tooling. Proposed responsiveness target: ordinary local navigation/filtering remains under 200 ms with 5,000 cards on a modern desktop; test and report the device/data conditions rather than treating this as a proven benchmark.
 
 For AI grading, use a small curated fixture set covering correct paraphrases, omissions, contradictions, alternative valid explanations, ambiguous references, and prompt injection. Inspect actual provider results in addition to schema/mocked tests. A provider's happy-path demo is insufficient to declare grading ready.
 

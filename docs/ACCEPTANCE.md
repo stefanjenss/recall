@@ -7,7 +7,7 @@ Test environment: the development container (Linux, headless Chromium 141 via Pl
 on two Playwright projects: **desktop** (1440×900) and **phone** (Pixel 7 emulation, touch). No real phones, tablets,
 Safari, or Firefox have been tested yet.
 
-Run everything with `npm test` (134 unit and server tests) and `npm run test:e2e` (60 end-to-end runs: 30 tests × 2
+Run everything with `npm test` (149 unit and server tests) and `npm run test:e2e` (62 end-to-end runs: 31 tests × 2
 projects, with the 2 sync tests running once each because they drive their own laptop and phone).
 
 | ID   | Scenario                                                    | Status                       | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
@@ -38,9 +38,10 @@ projects, with the 2 sync tests running once each because they drive their own l
 | AC24 | A card quick-checked twice in a row                         | **Pass**                     | `repository.test.ts` "AC24" (excluded from quick-check sessions, full recall resets the count); `queue.test.ts` eligibility and the `recall-only` skip                                                                                                                                                                                                                                                                                                                              |
 | AC25 | Version 1 database opened, or version 1 backup restored     | **Pass**                     | `repository.test.ts` "AC25": a real schema-1 IndexedDB is upgraded in place and its in-progress attempt still commits; a format-1 backup restores to exactly the same records; `sync.test.ts` upgrades a schema-1 sync server database in place and a device upgrades older-shaped records it pulls                                                                                                                                                                                 |
 | AC26 | Progress after quick checks                                 | **Pass**                     | `stats.test.ts` "AC26" (separate correct ratio; excluded from self-rating shares and calibration); `study.spec.ts` checks the Progress line                                                                                                                                                                                                                                                                                                                                         |
+| AC27 | Options added to existing cards in bulk                     | **Pass**                     | `optionsImport.test.ts` (parsing, matching by ID, validation, the export prompt); `repository.test.ts` "options for existing cards" (only options and content version change, schedules untouched, one transaction, stale and deleted cards skipped, retry is idempotent, in-progress attempt goes stale, outbox holds only the changed cards); `collection.spec.ts` "existing cards get options in bulk"; the preview is in the axe and 320 px reflow runs                         |
 
 AC01–AC18 and AC22 gate P0. All pass in automation except AC14, which still needs real-device and assistive-technology
-checks. AC23–AC26 cover quick checks (PRD §7, §8); the quick-check screens are also in the axe and 320 px reflow runs.
+checks. AC23–AC27 cover quick checks (PRD §7, §8); the quick-check screens are also in the axe and 320 px reflow runs.
 
 ## Other PRD requirements
 

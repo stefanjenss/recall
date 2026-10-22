@@ -768,6 +768,51 @@ button.choice:disabled {
   border: 1px solid var(--rule);
 }
 
+.draft code {
+  overflow-wrap: anywhere;
+}
+
+.draft--skipped .draft__status {
+  color: var(--ink-2);
+}
+
+/* Options import preview: each option labeled Correct or Wrong in text, not by color. */
+.option-preview {
+  font-size: 0.9375rem;
+}
+
+.option-preview__title {
+  font-size: var(--text-meta);
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.option-preview ul {
+  list-style: none;
+  margin: 0.2rem 0 0;
+  padding: 0;
+}
+
+.option-preview li {
+  overflow-wrap: anywhere;
+}
+
+.option-preview li + li {
+  margin-top: 0.2rem;
+}
+
+.option-preview__mark {
+  display: inline-block;
+  min-width: 4.25rem;
+  font-size: var(--text-meta);
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.options__result:focus {
+  outline: none;
+}
+
 /* ---------- Progress ---------- */
 
 .activity {

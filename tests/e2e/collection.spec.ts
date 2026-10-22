@@ -210,3 +210,89 @@ test('multiple-choice options can be written, imported, and edited; Today says w
   await expect(page.getByText('Changes saved.')).toBeVisible();
   await expect(page.getByText('No options')).toBeVisible();
 });
+
+test('existing cards get options in bulk: export the cards without them, paste the reply, preview, and save', async ({
+  page,
+}) => {
+  await freshWithStarterCards(page); // the starter cards already have options
+  await page.goto('./#/add/import');
+  const plain = [
+    { topic: 'SQL', question: 'What does `COALESCE` return?', answer: 'The first non-NULL argument.' },
+    { topic: 'SQL', question: 'What does `HAVING` filter?', answer: 'Groups, after aggregation.' },
+    { topic: 'Python', question: 'What does `zip` stop on?', answer: 'The shortest input.' },
+  ];
+  await page.getByLabel('Cards as JSON or tab-separated text').fill(JSON.stringify({ cards: plain }));
+  await page.getByRole('button', { name: 'Preview import' }).click();
+  await page.getByRole('button', { name: 'Add 3 cards' }).click();
+  await expect(page.getByText(/Added 3 cards/).first()).toBeVisible();
+
+  // Step 1: the prompt carries only cards without options, filterable by topic.
+  await page.goto('./#/add/options');
+  await expect(page.getByRole('link', { name: 'Add options' })).toHaveAttribute('aria-current', 'page');
+  await expect(page.locator('.import-summary')).toHaveText('3 of 9 cards have no multiple-choice options.');
+  await page.getByText('Show the prompt').click();
+  const promptCards = async () => {
+    const prompt = await page.getByLabel('Options prompt').inputValue();
+    return JSON.parse(prompt.slice(prompt.indexOf('<<<') + 3, prompt.indexOf('>>>'))) as Array<{
+      id: string;
+      question: string;
+      answer: string;
+    }>;
+  };
+  await page.getByLabel('Topic', { exact: true }).selectOption('SQL');
+  await expect(page.getByText('This prompt has all 2 cards without options in SQL.')).toBeVisible();
+  expect((await promptCards()).map((c) => c.question).sort()).toEqual([plain[0]!.question, plain[1]!.question].sort());
+  await page.getByLabel('Topic', { exact: true }).selectOption('');
+  const exported = await promptCards();
+  expect(
+    exported.map(({ question, answer }) => ({ question, answer })).sort((a, b) => a.question.localeCompare(b.question)),
+  ).toEqual(plain.map(({ question, answer }) => ({ question, answer })).sort((a, b) => a.question.localeCompare(b.question)));
+  const [coalesce, having, zip] = plain.map((p) => exported.find((c) => c.question === p.question));
+
+  // Step 2: paste a reply with two good entries, one bad one, and an ID that matches nothing.
+  const reply = {
+    format: 'recall-options-v1',
+    options: [
+      { id: zip!.id, choices: { correct: 'The shortest input', distractors: ['The longest input', 'The first input'] } },
+      { id: coalesce!.id, choices: { correct: 'The first non-NULL argument', distractors: ['NULL', 'The last argument'] } },
+      { id: having!.id, choices: { correct: 'Groups', distractors: ['groups'] } },
+      { id: 'made-up-id', choices: { correct: 'A', distractors: ['B'] } },
+    ],
+  };
+  await page.getByLabel('Options as JSON').fill(JSON.stringify(reply));
+  await page.getByRole('button', { name: 'Preview options' }).click();
+
+  // Step 3: preview each entry with its question, options, and any problem.
+  const entries = page.locator('.draft');
+  await expect(page.getByRole('status').filter({ hasText: 'to update' })).toHaveText(
+    '2 cards to update · 1 with errors · 1 skipped',
+  );
+  await expect(entries.nth(0)).toContainText('Ready');
+  await expect(entries.nth(0)).toContainText(plain[2]!.question.replaceAll('`', ''));
+  await expect(entries.nth(0)).toContainText('Correct The shortest input');
+  await expect(entries.nth(0)).toContainText('Wrong The longest input');
+  await expect(entries.nth(2)).toContainText('Error · skipped');
+  await expect(entries.nth(2)).toContainText('Each option must be different.');
+  await expect(entries.nth(3)).toContainText('Unknown card · skipped');
+  await expect(entries.nth(3)).toContainText('No card has the ID made-up-id.');
+
+  await entries.nth(1).getByRole('button', { name: 'Leave out' }).click();
+  await expect(entries.nth(1)).toContainText('Left out');
+  await expect(page.getByRole('button', { name: 'Save options for 1 card' })).toBeVisible();
+  await entries.nth(1).getByRole('button', { name: 'Include' }).click();
+  await page.getByRole('button', { name: 'Save options for 2 cards' }).dblclick();
+  await expect(page.getByText('Saved options for 2 cards. They can now appear in quick checks.')).toBeVisible();
+  await expect(page.locator('.import-summary')).toHaveText('1 of 9 cards has no multiple-choice options.');
+
+  // The cards keep their content and schedule; the edit counts as a new version.
+  await page.goto('./');
+  await page.getByRole('radio', { name: /Quick check/ }).check();
+  await expect(page.getByText(/8 of 9 due cards can be quick-checked; 1 has no multiple-choice options/)).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Add options to existing cards' })).toHaveAttribute('href', '#/add/options');
+  await page.goto(`./#/collection/${coalesce!.id}`);
+  await expect(page.getByLabel('Question')).toHaveValue(plain[0]!.question);
+  await expect(page.getByLabel('Answer')).toHaveValue(plain[0]!.answer);
+  await expect(page.getByLabel('Correct option')).toHaveValue('The first non-NULL argument');
+  await expect(page.getByText('version 2')).toBeVisible();
+  await expect(page.getByText('New · due now')).toBeVisible();
+});
