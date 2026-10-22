@@ -13,7 +13,7 @@ Database `recall`, schema version **3** (`src/storage/db.ts`). All timestamps ar
 | `reflections`   | `id`                                     | `byCreatedAt`                          | `Reflection`: body, optional session ID                                                                                                                                                |
 | `rubrics`       | `id`                                     | `byCard`                               | Reserved for P1 grading (empty in P0)                                                                                                                                                  |
 | `assessments`   | `id`                                     | `byAttempt`                            | Reserved for P1 grading (empty in P0)                                                                                                                                                  |
-| `importBatches` | `id`                                     | —                                      | Import idempotency keys. A runtime cache, excluded from backups                                                                                                                        |
+| `importBatches` | `id`                                     | —                                      | Idempotency keys for content imports and options imports. A runtime cache, excluded from backups                                                                                       |
 | `meta`          | `key`                                    | —                                      | `preferences`, `lastBackupAt`; while sync is connected, `syncConfig`, `syncState`, `syncClock` ([Sync](#sync))                                                                         |
 | `outbox`        | `id` (`<store>/<key>`)                   | —                                      | Records changed on this device that the sync server hasn't acknowledged yet. Written only while sync is connected                                                                      |
 
@@ -30,7 +30,7 @@ Types are defined in `src/domain/types.ts`.
 - A review has `mode: 'recall'` with a rating 1–4 and `quickCheck: null`, or `mode: 'quick-check'` with
   `rating: null` and a `quickCheck` result.
 - `stateVersion` increases on every schedule change (review, pause, resume, reset). `contentVersion` increases on
-  every content edit. Attempts record both and are rejected at commit if either has moved.
+  every content edit, including options added or replaced through Add options. Attempts record both and are rejected at commit if either has moved.
 - At most one session has `status: 'active'`.
 
 ### Migrations
@@ -159,6 +159,46 @@ Add knowledge → Import cards (`src/content/import.ts`).
 - **Idempotency:** each previewed batch gets a random ID. Committing records it in `importBatches` in the same
   transaction as the cards, so retrying or double-clicking returns "already imported" instead of adding the cards twice.
 - Imported cards start as new and due now.
+
+## Options import — `recall-options-v1`
+
+Add knowledge → Add options (`src/content/optionsImport.ts`) gives cards that already exist multiple-choice options,
+without creating cards. Step 1 copies a prompt (`buildOptionsPrompt` in `src/content/assistantPrompt.ts`) listing the
+active cards that have no options, optionally in one topic, at most 100 at a time:
+
+```json
+[{ "id": "8d0c…", "topic": "SQL", "question": "…", "answer": "…" }]
+```
+
+The assistant's reply is pasted back in this shape:
+
+```json
+{
+  "format": "recall-options-v1",
+  "options": [{ "id": "8d0c…", "choices": { "correct": "…", "distractors": ["…", "…", "…"] } }]
+}
+```
+
+- **Shape:** an object with an `options` list (a bare list is accepted too, and `format` may be left out, but any
+  other `format` is refused). At most 100 entries. A `cards` list (a content import) or a full backup pasted here is
+  redirected. Other fields in an entry, such as a question, are ignored.
+- **Matching** is by card `id` only, trimmed. An unknown ID, a deleted card, or a second entry for the same card is
+  skipped with a note; the first entry for a card is the one used.
+- **Validation:** `choices` is checked by `validateCardInput` together with the card's current content, exactly as an
+  edit would be: one correct option and one to three wrong ones, each up to 500 characters, all different; options are
+  trimmed and blank wrong ones dropped. `null`, or every option blank, means "no options" and leaves the card as it is.
+  An entry with errors is skipped; the valid ones can still be saved.
+- **Replacing:** a card that already has different options shows both sets and keeps its own unless the learner ticks
+  "Replace the current options". Identical options are skipped. The learner can leave out any ready entry.
+- **Saving** (`repository.applyOptions`) writes every included card in one transaction over `cards`, `importBatches`,
+  `meta`, and `outbox`. Each update carries the `contentVersion` the preview showed; a card deleted or edited since then
+  is skipped and reported. For the rest, only `choices` changes: `contentVersion` goes up by one and `updatedAt` is the
+  save time, so attempts in progress on those cards go stale at commit, as after any edit. Questions, answers, and
+  schedules are never touched. While sync is connected, each changed card (and nothing else) is queued in the outbox
+  in the same transaction.
+- **Idempotency:** each preview gets a random ID, recorded in `importBatches` with the changed card IDs. Retrying or
+  double-clicking returns "already saved" and changes nothing. An invalid update aborts the whole transaction, so
+  nothing is recorded and the same preview can be saved once it's fixed.
 
 ## Sync
 

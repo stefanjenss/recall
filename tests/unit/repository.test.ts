@@ -5,6 +5,7 @@ import { STARTER_CARDS } from '../../src/content/starter';
 import { DAY_MS } from '../../src/domain/scheduler';
 import type { CardContent } from '../../src/domain/types';
 import { createRepository, type PracticeState, type Repository } from '../../src/storage/repository';
+import { validateChange } from '../../src/sync/protocol';
 
 const T0 = Date.UTC(2026, 9, 12, 18, 0, 0);
 const MIN = 60_000;
@@ -600,6 +601,143 @@ describe('repository: quick checks', () => {
       ['reviewed', null],
       ['skipped', 'recall-only'],
     ]);
+  });
+});
+
+describe('repository: options for existing cards', () => {
+  const OPTIONS = { correct: 'Right', distractors: ['Wrong 1', 'Wrong 2', 'Wrong 3'] };
+
+  async function threeCards(repo: Repository) {
+    const { cardIds } = await repo.addCards([card('Q1'), card('Q2'), card('Q3')], T0);
+    return cardIds as [string, string, string];
+  }
+
+  it('changes only the options and content version, in one transaction, and a retry applies nothing twice', async () => {
+    const repo = freshRepo();
+    const [id1, id2, id3] = await threeCards(repo);
+    await revealAndRate(repo, await startedState(repo, T0, 1), 3, T0); // give one card a real schedule
+    const before = await repo.loadWorkspace();
+    const later = T0 + DAY_MS;
+    const updates = [
+      { cardId: id1, cardVersion: 1, choices: OPTIONS },
+      { cardId: id2, cardVersion: 1, choices: { correct: '  Trimmed ', distractors: [' One ', ''] } },
+    ];
+
+    const result = await repo.applyOptions(updates, later, 'batch-1');
+    expect(result).toEqual({ status: 'applied', cardIds: [id1, id2], skipped: [] });
+    const after = await repo.loadWorkspace();
+    const byId = (ws: typeof after) => new Map(ws.cards.map((c) => [c.id, c]));
+    const [old, now] = [byId(before), byId(after)];
+    expect(now.get(id1)).toEqual({ ...old.get(id1), choices: OPTIONS, contentVersion: 2, updatedAt: later });
+    expect(now.get(id2)).toEqual({
+      ...old.get(id2),
+      choices: { correct: 'Trimmed', distractors: ['One'] },
+      contentVersion: 2,
+      updatedAt: later,
+    });
+    expect(now.get(id3)).toEqual(old.get(id3));
+    expect(after.schedules).toEqual(before.schedules);
+    expect(after.reviews).toEqual(before.reviews);
+
+    const retry = await repo.applyOptions(updates, later + MIN, 'batch-1');
+    expect(retry).toEqual({ status: 'already-applied', cardIds: [id1, id2] });
+    expect((await repo.loadWorkspace()).cards).toEqual(after.cards);
+  });
+
+  it('skips cards deleted or edited since the preview, and options already in place', async () => {
+    const repo = freshRepo();
+    const [id1, id2, id3] = await threeCards(repo);
+    const { cardIds } = await repo.addCards([card('Q4')], T0);
+    const id4 = cardIds[0]!;
+    await repo.deleteCard(id1, T0);
+    await repo.updateCard(id2, { ...card('Q2'), answer: 'Edited elsewhere' }, T0);
+    await repo.updateCard(id3, { ...card('Q3'), choices: OPTIONS }, T0);
+
+    const result = await repo.applyOptions(
+      [
+        { cardId: id1, cardVersion: 1, choices: OPTIONS },
+        { cardId: id2, cardVersion: 1, choices: OPTIONS },
+        { cardId: id3, cardVersion: 2, choices: OPTIONS },
+        { cardId: 'no-such-card', cardVersion: 1, choices: OPTIONS },
+        { cardId: id4, cardVersion: 1, choices: OPTIONS },
+      ],
+      T0 + MIN,
+    );
+    expect(result).toEqual({
+      status: 'applied',
+      cardIds: [id4],
+      skipped: [
+        { cardId: id1, reason: 'deleted' },
+        { cardId: id2, reason: 'edited' },
+        { cardId: id3, reason: 'unchanged' },
+        { cardId: 'no-such-card', reason: 'deleted' },
+      ],
+    });
+    const cards = new Map((await repo.loadWorkspace()).cards.map((c) => [c.id, c]));
+    expect(cards.get(id2)).toMatchObject({ choices: null, contentVersion: 2, answer: 'Edited elsewhere' });
+    expect(cards.get(id3)).toMatchObject({ contentVersion: 2 });
+    expect(cards.get(id4)).toMatchObject({ choices: OPTIONS, contentVersion: 2 });
+  });
+
+  it('rejects invalid options without writing any of the batch', async () => {
+    const repo = freshRepo();
+    const [id1, id2] = await threeCards(repo);
+    const good = { cardId: id1, cardVersion: 1, choices: OPTIONS };
+    const bad = { cardId: id2, cardVersion: 1, choices: { correct: 'A', distractors: ['B', 'C', 'D', 'E'] } };
+    await expect(repo.applyOptions([good, bad], T0, 'batch-1')).rejects.toThrow('Use at most 3 wrong options; found 4.');
+    expect((await repo.loadWorkspace()).cards.every((c) => c.choices === null && c.contentVersion === 1)).toBe(true);
+
+    // The failed attempt recorded nothing, so the same batch can still be applied once it's valid.
+    expect(await repo.applyOptions([good], T0, 'batch-1')).toMatchObject({ status: 'applied', cardIds: [id1] });
+  });
+
+  it('an attempt in progress on the card goes stale; afterwards the card can be quick-checked', async () => {
+    const repo = freshRepo();
+    await repo.addCards([card('Q1')], T0);
+    const state = await startedState(repo);
+    const attempt = state.session.attempt!;
+    await repo.reveal(state.session.id, attempt.id, { response: 'my answer', confidence: null }, T0);
+    await repo.applyOptions([{ cardId: state.card!.id, cardVersion: 1, choices: OPTIONS }], T0 + MIN);
+
+    const result = await repo.commitReview(state.session.id, attempt.id, 3, T0 + MIN);
+    expect(result.status === 'stale' && result.reason).toBe('edited');
+    const fresh = await repo.refreshAttempt(state.session.id, attempt.id, T0 + MIN);
+    expect(fresh!.session.attempt).toMatchObject({ cardVersion: 2, revealed: false });
+    expect((await repo.loadWorkspace()).reviews).toHaveLength(0);
+
+    await repo.endSession(state.session.id, T0 + 2 * MIN);
+    const quick = await quickState(repo, T0 + 2 * MIN);
+    expect([...quick.session.attempt!.options!].sort()).toEqual(['Right', 'Wrong 1', 'Wrong 2', 'Wrong 3']);
+  });
+
+  it('queues each changed card, and nothing else, for sync', async () => {
+    const repo = freshRepo();
+    const [id1, id2, id3] = await threeCards(repo);
+    await repo.connectSync(
+      { url: 'https://sync.example.test/', key: 'test-key', deviceId: 'dev-a', serverId: 'server-1', connectedAt: T0 },
+      'upload',
+      T0,
+    );
+    const queued = async () => new Map((await repo.readOutbox(100)).items.map((i) => [i.entry.id, i]));
+    const before = await queued();
+
+    await repo.applyOptions(
+      [
+        { cardId: id1, cardVersion: 1, choices: OPTIONS },
+        { cardId: id2, cardVersion: 1, choices: OPTIONS },
+      ],
+      T0 + MIN,
+    );
+    const after = await queued();
+    expect([...after.keys()].sort()).toEqual([...before.keys()].sort());
+    const restamped = [...after].filter(([id, item]) => item.entry.hlc !== before.get(id)!.entry.hlc).map(([id]) => id);
+    expect(restamped.sort()).toEqual([`cards/${id1}`, `cards/${id2}`].sort());
+    for (const id of restamped) {
+      const { change } = after.get(id)!;
+      expect(validateChange(change)).toMatchObject({ ok: true });
+      expect(change.value).toMatchObject({ choices: OPTIONS, contentVersion: 2 });
+    }
+    expect(after.get(`cards/${id3}`)!.change.value).toMatchObject({ choices: null, contentVersion: 1 });
   });
 });
 

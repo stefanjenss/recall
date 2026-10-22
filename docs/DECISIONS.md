@@ -103,6 +103,36 @@ usable only once or twice in a row. PRD §7 and §8 have the spec; these are the
 - **Metrics.** Quick checks count toward activity, totals, and the streak (they are practice), and are reported on their
   own line in Progress. They are excluded from the self-rated Good/Easy share and the confidence table.
 
+## Options for existing cards (October 2026)
+
+The owner's collection predates options, so quick checks couldn't use any of it, and options could only be added one
+card at a time in the editor. A content import can't help: it always creates cards, and matching questions are skipped
+as duplicates. Add knowledge → Add options fills the gap. DATA.md has the format.
+
+- **Matched by ID, not by question.** The prompt carries each card's ID and the reply must copy it back. IDs survive
+  edits and duplicate questions; matching on question text would break on either. The prompt also carries the topic,
+  which helps the assistant pick plausible wrong options.
+- **The same guidance.** The option-writing rules are one block shared by the card prompt and the options prompt, so
+  they can't drift apart. The card prompt's text didn't change.
+- **The same validation.** Each entry is validated with `validateCardInput` against the card's current content, the
+  path a single edit takes, so bulk and one-at-a-time options follow identical rules.
+- **Valid entries save; invalid ones are skipped.** Unlike a content import, an error doesn't block the batch: these
+  entries add to existing cards rather than create content, the bad ones are listed with their reason, and asking the
+  assistant again for those cards is the natural fix. Inline editing of entries wasn't built; the card editor is there.
+- **Replacing is opt-in.** The export lists only cards without options, but a card can gain options between export and
+  paste (in another tab, or on another device). Overwriting options the learner wrote is the riskier mistake, so a
+  card's own options stay unless the learner ticks "Replace the current options". This matches content import, where
+  duplicates are skipped unless kept.
+- **A content edit.** Adding options bumps `contentVersion`, the same as saving the card editor, so an attempt in
+  progress goes stale and reloads with the new content instead of committing against a version it didn't show.
+  Schedules and review history are untouched; options don't change what the learner knows.
+- **One transaction, guarded by version.** Every included card is written together, or none. Each update names the
+  `contentVersion` the preview showed; a card edited or deleted since then is skipped and reported rather than
+  overwritten. The idempotency key reuses `importBatches`, which already plays this role for content imports.
+- **Up to 100 per prompt, 25 by default.** Assistants answer smaller batches in full more reliably. After a save, the
+  next prompt automatically holds the next cards without options.
+- **Today links to it** when due cards are left out of a quick check for lack of options.
+
 ## Performance
 
 `scripts/perf-check.mjs` restores a synthetic backup of 5,000 cards and 20,000 reviews, then times interactions end to

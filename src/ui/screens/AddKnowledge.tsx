@@ -21,8 +21,9 @@ import { KIND_LABELS } from '../../domain/types';
 import { CardFields, EMPTY_CARD_FORM, formValuesFrom, type CardFormValues } from '../components/CardFields';
 import { Notice, PageHeader } from '../components/common';
 import { plainExcerpt } from '../markdown';
+import { AddOptions } from './AddOptions';
 
-export function AddKnowledge({ mode }: { mode: 'write' | 'import' }) {
+export function AddKnowledge({ mode }: { mode: 'write' | 'import' | 'options' }) {
   return (
     <div className="screen add">
       <PageHeader title="Add knowledge" />
@@ -33,8 +34,11 @@ export function AddKnowledge({ mode }: { mode: 'write' | 'import' }) {
         <a className="tabs__tab" href={href('add/import')} aria-current={mode === 'import' ? 'page' : undefined}>
           Import cards
         </a>
+        <a className="tabs__tab" href={href('add/options')} aria-current={mode === 'options' ? 'page' : undefined}>
+          Add options
+        </a>
       </nav>
-      {mode === 'write' ? <WriteCard /> : <ImportCards />}
+      {mode === 'write' ? <WriteCard /> : mode === 'import' ? <ImportCards /> : <AddOptions />}
     </div>
   );
 }

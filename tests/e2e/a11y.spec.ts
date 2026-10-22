@@ -1,8 +1,31 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
-import { freshWithStarterCards, noHorizontalScroll, startQuickCheck, startReview } from './helpers';
+import { freshWithStarterCards, noHorizontalScroll, readStore, startQuickCheck, startReview } from './helpers';
 
-const SCREENS = ['./', './#/collection', './#/add', './#/add/import', './#/progress', './#/method', './#/settings'];
+const SCREENS = [
+  './',
+  './#/collection',
+  './#/add',
+  './#/add/import',
+  './#/add/options',
+  './#/progress',
+  './#/method',
+  './#/settings',
+];
+
+/** Add options → step 3, with a replacement, an unknown card ID, and an empty entry. */
+async function previewOptions(page: import('@playwright/test').Page) {
+  const [first] = await readStore<{ id: string }>(page, 'cards');
+  const options = [
+    { id: first!.id, choices: { correct: 'A replacement option', distractors: ['Another option', 'A third option'] } },
+    { id: 'an-id-that-matches-no-card-0123456789abcdef0123456789abcdef', choices: { correct: 'A', distractors: ['B'] } },
+    { id: first!.id, choices: null },
+  ];
+  await page.goto('./#/add/options');
+  await page.getByLabel('Options as JSON').fill(JSON.stringify({ format: 'recall-options-v1', options }));
+  await page.getByRole('button', { name: 'Preview options' }).click();
+  await expect(page.getByText('Has options · keeping them')).toBeVisible();
+}
 
 async function expectNoAxeViolations(page: import('@playwright/test').Page, label: string) {
   const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa']).analyze();
@@ -36,6 +59,9 @@ test('automated WCAG checks pass on every screen and practice state', async ({ p
   await page.goto('./#/add');
   await page.getByRole('button', { name: /Multiple-choice options/ }).click();
   await expectNoAxeViolations(page, 'add: options open');
+
+  await previewOptions(page);
+  await expectNoAxeViolations(page, 'add options: preview');
 });
 
 test('AC14: content reflows at 320 CSS px (≈ 200% zoom of 640 px) without horizontal page scroll', async ({ browser }) => {
@@ -69,6 +95,9 @@ test('AC14: content reflows at 320 CSS px (≈ 200% zoom of 640 px) without hori
   for (const b of options) expect(b.height).toBeGreaterThanOrEqual(44);
   await page.locator('button.choice').first().click();
   await expect(page.getByRole('heading', { name: 'Full answer' })).toBeVisible();
+  await noHorizontalScroll(page);
+
+  await previewOptions(page);
   await noHorizontalScroll(page);
   await context.close();
 });

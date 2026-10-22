@@ -50,7 +50,7 @@ function Screen({ route }: { route: Route }) {
     case 'collection':
       return second ? <CardEditor key={second} cardId={second} /> : <Collection params={route.params} />;
     case 'add':
-      return <AddKnowledge mode={second === 'import' ? 'import' : 'write'} />;
+      return <AddKnowledge mode={second === 'import' || second === 'options' ? second : 'write'} />;
     case 'practice':
       return <Practice />;
     case 'session':

@@ -4,6 +4,7 @@
 
 import type { IDBPTransaction } from 'idb';
 import { validateRecord, type WorkspaceData } from '../content/backup';
+import type { OptionsUpdate } from '../content/optionsImport';
 import { sameChoices, shuffledOptions } from '../domain/choices';
 import { newId } from '../domain/ids';
 import { duplicateKey, LIMITS, overLimitMessage, validateCardInput } from '../domain/limits';
@@ -121,6 +122,13 @@ export type CommitResult =
   | { status: 'ineligible'; reason: 'deleted' | 'paused'; state: PracticeState };
 
 export type AddCardsResult = { status: 'added'; cardIds: string[] } | { status: 'already-imported'; cardIds: string[] };
+
+/** Why an options update was left out at apply time: the card is gone, was edited since the preview, or already matches. */
+export type OptionsSkipReason = 'deleted' | 'edited' | 'unchanged';
+
+export type ApplyOptionsResult =
+  | { status: 'applied'; cardIds: string[]; skipped: Array<{ cardId: string; reason: OptionsSkipReason }> }
+  | { status: 'already-applied'; cardIds: string[] };
 
 type Tx<S extends StoreName[], M extends IDBTransactionMode> = IDBPTransaction<RecallSchema, S, M>;
 
@@ -601,6 +609,52 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
       await tx.objectStore('cards').put(next);
       await markChanged(tx, [['cards', cardId]], now);
       return next;
+    });
+  }
+
+  /**
+   * Give existing cards multiple-choice options, atomically. Only `choices`
+   * changes: it's a content edit, so `contentVersion` goes up (attempts on
+   * those cards go stale) and schedules are untouched. A card deleted or
+   * edited since the preview is skipped. With a batchId, retrying the same
+   * request returns the original result instead of applying it again.
+   */
+  async function applyOptions(updates: OptionsUpdate[], now: number, batchId?: string): Promise<ApplyOptionsResult> {
+    return run(['cards', 'importBatches', 'meta', 'outbox'], 'readwrite', async (tx) => {
+      if (batchId) {
+        const prior = await tx.objectStore('importBatches').get(batchId);
+        if (prior) return { status: 'already-applied', cardIds: prior.cardIds };
+      }
+      const cards = tx.objectStore('cards');
+      const cardIds: string[] = [];
+      const skipped: Array<{ cardId: string; reason: OptionsSkipReason }> = [];
+      for (const update of updates) {
+        const card = await cards.get(update.cardId);
+        if (!card || card.deletedAt !== null) {
+          skipped.push({ cardId: update.cardId, reason: 'deleted' });
+          continue;
+        }
+        if (card.contentVersion !== update.cardVersion) {
+          skipped.push({ cardId: card.id, reason: 'edited' });
+          continue;
+        }
+        const { topic, question, answer, kind, source } = card;
+        const { value, errors } = validateCardInput({ topic, question, answer, kind, source, choices: update.choices });
+        if (!value?.choices) throw new ValidationError(errors.map((e) => e.message).join(' ') || 'Options are required.');
+        if (sameChoices(card.choices, value.choices)) {
+          skipped.push({ cardId: card.id, reason: 'unchanged' });
+          continue;
+        }
+        await cards.put({ ...card, choices: value.choices, contentVersion: card.contentVersion + 1, updatedAt: now });
+        cardIds.push(card.id);
+      }
+      if (batchId) await tx.objectStore('importBatches').add({ id: batchId, committedAt: now, cardIds });
+      await markChanged(
+        tx,
+        cardIds.map((id): [SyncStore, string] => ['cards', id]),
+        now,
+      );
+      return { status: 'applied', cardIds, skipped };
     });
   }
 
@@ -1134,6 +1188,7 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
     addCards,
     addMissingCards,
     updateCard,
+    applyOptions,
     setPaused,
     resetProgress,
     deleteCard,
