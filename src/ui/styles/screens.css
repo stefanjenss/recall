@@ -172,6 +172,11 @@
   margin-top: 1.4rem;
 }
 
+.practice__attempt > .practice__options-hint {
+  margin-top: 0.5rem;
+  max-width: var(--measure);
+}
+
 .practice__response {
   min-height: 9rem;
   font-size: var(--text-body) !important;

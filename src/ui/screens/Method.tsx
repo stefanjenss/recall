@@ -174,6 +174,11 @@ export function Method() {
             After {QUICK_CHECK_LIMIT} quick checks in a row, a card waits for a full recall. Any full-recall review resets the
             count.
           </li>
+          <li>
+            Drawing a blank in a full-recall session? A card that has options offers Show options before you reveal the answer.
+            That card becomes a quick check, under the same rules and counting toward the same limit. Anything you typed is kept
+            with it but not scored.
+          </li>
           <li>Progress reports quick checks on their own line. They aren’t self-ratings and never lengthen an interval.</li>
         </ul>
       </section>

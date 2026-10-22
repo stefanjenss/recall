@@ -237,3 +237,60 @@ test('refreshing after a quick-check pick restores the same options, pick, and r
   await expect(page.locator('.choice--result').nth(2).locator('.choice__status')).toHaveText(/Your pick/);
   await expect(cardPosition(page)).toContainText('Card 1 of 6');
 });
+
+test('show options: a blank in full recall turns just that card into a quick check, saved and labeled as one', async ({
+  page,
+}) => {
+  await freshWithStarterCards(page);
+  await page.getByRole('radio', { name: '5' }).check();
+  await startReview(page);
+
+  const question = (await page.locator('.practice__question').innerText()).slice(0, 30);
+  await page.getByLabel('Your answer').fill('Something about spacing?');
+  await page.getByRole('radio', { name: 'Unsure' }).check();
+  await page.getByRole('button', { name: 'Show options' }).click();
+  await expect(page.getByRole('heading', { name: 'Choose the best answer' })).toBeFocused();
+  await expect(page.getByRole('textbox', { name: 'Your answer' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /Reveal answer/ })).toHaveCount(0);
+  await expect(page.locator('.practice__meta')).toContainText('Quick check');
+
+  // A reload keeps the switch and the option order.
+  const order = await page.locator('button.choice .choice__text').allInnerTexts();
+  await page.reload();
+  await expect(page.locator('button.choice .choice__text')).toHaveText(order);
+
+  await page.locator('.practice__question').click();
+  await page.keyboard.press('1');
+  await expect(page.getByRole('heading', { name: /^(Correct|Not quite)$/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'What you typed first' })).toBeVisible();
+  await expect(page.getByText('Something about spacing?')).toBeVisible();
+  await expect(page.getByRole('button', { name: /^Good/ })).toHaveCount(0);
+  const correct = (await page.getByRole('heading', { name: /^(Correct|Not quite)$/ }).innerText()).includes('Correct');
+  await page.keyboard.press('Space');
+
+  // The rest of the session is full recall.
+  for (let i = 2; i <= 5; i++) {
+    await expect(cardPosition(page)).toContainText(`Card ${i} of 5`);
+    await expect(page.getByRole('button', { name: 'Show options' })).toBeVisible();
+    await page.getByRole('button', { name: /Reveal answer/ }).click();
+    await page.getByRole('button', { name: /^Good/ }).click();
+  }
+
+  await expect(page.getByRole('heading', { name: /5\s*cards reviewed/ })).toBeVisible();
+  await expect(page.locator('.rating-summary td').nth(2)).toHaveText('4'); // Good
+  await expect(
+    page.getByText(
+      `1 card was switched to its options and saved as a quick check: ${correct ? '1 correct, 0 missed' : '0 correct, 1 missed'}.`,
+    ),
+  ).toBeVisible();
+
+  await page.goto('./#/progress');
+  await expect(page.getByText('incl. 1 quick check', { exact: true })).toBeVisible();
+  await expect(page.getByText(`${correct ? 1 : 0} of 1 quick checks`)).toBeVisible();
+
+  await page.goto('./#/collection');
+  await page.locator('.card-row', { hasText: question }).click();
+  await expect(page.locator('.history li').first()).toContainText(
+    `Quick check · ${correct ? 'Correct' : 'Missed'} · felt unsure`,
+  );
+});

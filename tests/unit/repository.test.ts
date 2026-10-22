@@ -5,6 +5,7 @@ import { STARTER_CARDS } from '../../src/content/starter';
 import { DAY_MS } from '../../src/domain/scheduler';
 import type { CardContent } from '../../src/domain/types';
 import { createRepository, type PracticeState, type Repository } from '../../src/storage/repository';
+import { validateChange } from '../../src/sync/protocol';
 
 const T0 = Date.UTC(2026, 9, 12, 18, 0, 0);
 const MIN = 60_000;
@@ -600,6 +601,221 @@ describe('repository: quick checks', () => {
       ['reviewed', null],
       ['skipped', 'recall-only'],
     ]);
+  });
+});
+
+describe('repository: show options in a full-recall session', () => {
+  const blank = { response: 'Something about…', confidence: 'unsure' as const };
+
+  it('switches the current attempt to shuffled options, keeps the draft, and saves a quick check', async () => {
+    const repo = freshRepo();
+    await repo.addCards([withChoices('Q1'), withChoices('Q2')], T0);
+    const state = await startedState(repo);
+    const attempt = state.session.attempt!;
+    expect(attempt.options).toBeNull();
+
+    const switched = await repo.showOptions(state.session.id, attempt.id, blank);
+    if (switched.status !== 'switched') throw new Error(`expected switched, got ${switched.status}`);
+    const after = switched.state.session.attempt!;
+    expect(after).toMatchObject({ id: attempt.id, ...blank, revealed: false, picked: null });
+    expect([...after.options!].sort()).toEqual([state.card!.choices!.correct, ...state.card!.choices!.distractors].sort());
+    expect(switched.state.session.mode).toBe('recall');
+
+    // Idempotent: a retry or a reload keeps the order already shown, and the draft is frozen.
+    const again = await repo.showOptions(state.session.id, attempt.id, { response: 'changed', confidence: null });
+    expect(again.status === 'switched' && again.state.session.attempt).toMatchObject({ options: after.options, ...blank });
+    expect((await repo.ensureAttempt(state.session.id, T0 + MIN))!.session.attempt!.options).toEqual(after.options);
+    expect(await repo.saveDraft(state.session.id, attempt.id, { response: 'late flush', confidence: null })).toBe(false);
+
+    // One way: no reveal or self-rating once the options are showing.
+    await expect(repo.reveal(state.session.id, attempt.id, blank, T0)).rejects.toThrow(/quick check/);
+    const right = after.options!.indexOf(state.card!.choices!.correct);
+    await repo.pickOption(state.session.id, attempt.id, right, T0 + MIN);
+    await expect(repo.commitReview(state.session.id, attempt.id, 3, T0 + MIN)).rejects.toThrow(/no self-rating/);
+
+    const result = await repo.commitQuickCheck(state.session.id, attempt.id, T0 + 2 * MIN);
+    if (result.status !== 'committed') throw new Error(`expected commit, got ${result.status}`);
+    expect(result.review).toMatchObject({
+      id: attempt.id,
+      mode: 'quick-check',
+      rating: null,
+      sessionId: state.session.id,
+      ...blank,
+      quickCheck: { options: after.options, picked: right, correct: true },
+    });
+    expect((await repo.commitQuickCheck(state.session.id, attempt.id, T0 + 3 * MIN)).status).toBe('duplicate');
+
+    // The session stays a full recall: the next card has no options until asked.
+    expect(result.state.session).toMatchObject({ mode: 'recall', index: 1 });
+    expect(result.state.session.attempt!.options).toBeNull();
+    const ws = await repo.loadWorkspace();
+    expect(ws.reviews).toHaveLength(1);
+    expect(ws.schedules.find((s) => s.cardId === state.card!.id)).toMatchObject({
+      dueAt: T0 + 2 * MIN + DAY_MS,
+      intervalDays: 0,
+      ease: 2.5,
+      reviewCount: 0,
+      quickChecksSinceRecall: 1,
+    });
+  });
+
+  it('a missed pick after switching is applied as Again', async () => {
+    const repo = freshRepo();
+    await repo.addCards([withChoices('Q1')], T0);
+    const state = await startedState(repo);
+    const attempt = state.session.attempt!;
+    const switched = await repo.showOptions(state.session.id, attempt.id, { response: '', confidence: null });
+    if (switched.status !== 'switched') throw new Error('expected switched');
+    const result = await pickAndSave(repo, switched.state, false, T0);
+    if (result.status !== 'committed') throw new Error('expected commit');
+    expect(result.review.mode === 'quick-check' && result.review.quickCheck.correct).toBe(false);
+    const [s] = (await repo.loadWorkspace()).schedules;
+    expect(s).toMatchObject({ dueAt: T0 + 10 * MIN, ease: 2.3, lapseCount: 1, quickChecksSinceRecall: 1 });
+  });
+
+  it('is refused for a card without options, a revealed answer, or a card at the quick-check limit', async () => {
+    const repo = freshRepo();
+    await repo.addCards([card('plain')], T0);
+    const plain = await startedState(repo);
+    const pa = plain.session.attempt!;
+    await expect(repo.showOptions(plain.session.id, pa.id, blank)).rejects.toThrow(/no multiple-choice options/);
+    await repo.reveal(plain.session.id, pa.id, blank, T0);
+    await expect(repo.showOptions(plain.session.id, pa.id, blank)).rejects.toThrow(/already showing/);
+    await repo.endSession(plain.session.id, T0);
+
+    // One quick check from a quick-check session and one switch reach the limit together.
+    const limited = freshRepo();
+    await limited.addCards([withChoices('Q1')], T0);
+    await pickAndSave(limited, await quickState(limited, T0), true, T0);
+    const recall = await startedState(limited, T0 + DAY_MS);
+    const switched = await limited.showOptions(recall.session.id, recall.session.attempt!.id, blank);
+    if (switched.status !== 'switched') throw new Error('expected switched');
+    await pickAndSave(limited, switched.state, true, T0 + DAY_MS);
+    expect((await limited.loadWorkspace()).schedules[0]!.quickChecksSinceRecall).toBe(2);
+
+    const later = T0 + 3 * DAY_MS;
+    expect((await limited.startSession({ topics: null, size: 20, now: later, mode: 'quick-check' })).status).toBe('empty');
+    const needsRecall = await startedState(limited, later);
+    const na = needsRecall.session.attempt!;
+    await expect(limited.showOptions(needsRecall.session.id, na.id, blank)).rejects.toThrow(/needs a full recall/);
+    expect((await limited.ensureAttempt(needsRecall.session.id, later))!.session.attempt!.options).toBeNull();
+    const rated = await revealAndRate(limited, needsRecall, 3, later);
+    expect(rated.status).toBe('committed');
+    expect((await limited.loadWorkspace()).schedules[0]!.quickChecksSinceRecall).toBe(0);
+  });
+
+  it('is guarded like a commit: edited, reviewed elsewhere, paused, deleted, or a changed session', async () => {
+    const repo = freshRepo();
+    await repo.addCards([withChoices('Q1'), withChoices('Q2'), withChoices('Q3'), withChoices('Q4')], T0);
+    const state = await startedState(repo);
+    const sid = state.session.id;
+    const [first, second, third, fourth] = state.session.queue as [string, string, string, string];
+    const attemptId = async () => (await repo.ensureAttempt(sid, T0))!.session.attempt!.id;
+
+    // Edited: nothing switches; the fresh attempt on the updated card can switch.
+    const a1 = await attemptId();
+    await repo.updateCard(first, { ...withChoices('Q1'), answer: 'Reworded' }, T0);
+    const edited = await repo.showOptions(sid, a1, blank);
+    expect(edited.status === 'stale' && edited.reason).toBe('edited');
+    expect((await repo.ensureAttempt(sid, T0))!.session.attempt).toMatchObject({ id: a1, options: null });
+    const fresh = await repo.refreshAttempt(sid, a1, T0);
+    expect((await repo.showOptions(sid, fresh!.session.attempt!.id, blank)).status).toBe('switched');
+    await pickAndSave(repo, (await repo.ensureAttempt(sid, T0))!, true, T0);
+
+    // Reviewed elsewhere: the schedule moved on after the attempt began.
+    const a2 = await attemptId();
+    await repo.setPaused(second, true, T0);
+    await repo.setPaused(second, false, T0);
+    const elsewhere = await repo.showOptions(sid, a2, blank);
+    expect(elsewhere.status === 'stale' && elsewhere.reason).toBe('reviewed-elsewhere');
+    await repo.skipCurrent(sid, a2, 'reviewed-elsewhere', T0);
+
+    const a3 = await attemptId();
+    await repo.setPaused(third, true, T0);
+    const paused = await repo.showOptions(sid, a3, blank);
+    expect(paused.status === 'ineligible' && paused.reason).toBe('paused');
+    await repo.skipCurrent(sid, a3, 'paused', T0);
+
+    const a4 = await attemptId();
+    expect((await repo.ensureAttempt(sid, T0))!.session.attempt!.cardId).toBe(fourth);
+    await repo.deleteCard(fourth, T0);
+    const deleted = await repo.showOptions(sid, a4, blank);
+    expect(deleted.status === 'ineligible' && deleted.reason).toBe('deleted');
+
+    await repo.endSession(sid, T0);
+    const ended = await repo.showOptions(sid, a4, blank);
+    expect(ended.status === 'stale' && ended.reason).toBe('session-changed');
+    expect((await repo.loadWorkspace()).reviews).toHaveLength(1);
+  });
+
+  it('a switched card edited after the switch gets a fresh quick check with the draft kept', async () => {
+    const repo = freshRepo();
+    await repo.addCards([withChoices('Q1')], T0);
+    const state = await startedState(repo);
+    const attempt = state.session.attempt!;
+    await repo.showOptions(state.session.id, attempt.id, blank);
+    await repo.updateCard(state.card!.id, { ...withChoices('Q1'), choices: { correct: 'New', distractors: ['Old'] } }, T0);
+    const fresh = await repo.refreshAttempt(state.session.id, attempt.id, T0 + MIN);
+    expect(fresh!.session.attempt).toMatchObject({ ...blank, picked: null });
+    expect([...fresh!.session.attempt!.options!].sort()).toEqual(['New', 'Old']);
+
+    // If the edit removes the options, the fresh attempt falls back to full recall.
+    await repo.updateCard(state.card!.id, { ...withChoices('Q1'), choices: null }, T0 + MIN);
+    const recall = await repo.refreshAttempt(state.session.id, fresh!.session.attempt!.id, T0 + 2 * MIN);
+    expect(recall!.session.attempt).toMatchObject({ ...blank, options: null });
+  });
+
+  it('a quick check inside a full-recall session passes sync validation once the session finishes', async () => {
+    const repo = freshRepo();
+    await repo.addCards([withChoices('Q1'), withChoices('Q2')], T0);
+    await repo.connectSync(
+      { url: 'https://sync.example.test/', key: 'test-key', deviceId: 'dev-a', serverId: 'server-1', connectedAt: T0 },
+      'upload',
+      T0,
+    );
+    const state = await startedState(repo);
+    const queued = async () => (await repo.readOutbox(100)).items.map((i) => i.change);
+    const before = await queued();
+
+    const switched = await repo.showOptions(state.session.id, state.session.attempt!.id, blank);
+    if (switched.status !== 'switched') throw new Error('expected switched');
+    expect(await queued()).toEqual(before); // the active session stays on this device
+    const committed = await pickAndSave(repo, switched.state, true, T0 + MIN);
+    if (committed.status !== 'committed') throw new Error('expected commit');
+    await repo.endSession(state.session.id, T0 + 2 * MIN);
+
+    const changes = await queued();
+    for (const change of changes) expect(validateChange(change)).toMatchObject({ ok: true });
+    expect(changes.find((c) => c.store === 'reviews')!.value).toMatchObject({ mode: 'quick-check', ...blank });
+    expect(changes.find((c) => c.store === 'sessions')!.value).toMatchObject({
+      mode: 'recall',
+      status: 'ended',
+      results: [{ outcome: 'reviewed', rating: null }],
+    });
+  });
+
+  it('a backup accepts a quick-check review, and a switched attempt, inside a full-recall session', async () => {
+    const source = freshRepo();
+    await source.addCards([withChoices('Q1'), withChoices('Q2')], T0);
+    const state = await startedState(source);
+    const switched = await source.showOptions(state.session.id, state.session.attempt!.id, blank);
+    if (switched.status !== 'switched') throw new Error('expected switched');
+    const committed = await pickAndSave(source, switched.state, true, T0 + MIN);
+    if (committed.status !== 'committed') throw new Error('expected commit');
+    // The second card is left mid-switch.
+    await source.showOptions(state.session.id, committed.state.session.attempt!.id, { response: '', confidence: null });
+    const data = await source.exportWorkspace();
+    expect(data.sessions[0]).toMatchObject({ mode: 'recall', status: 'active' });
+    expect(data.sessions[0]!.attempt!.options).not.toBeNull();
+    expect(data.reviews[0]!.mode).toBe('quick-check');
+
+    const parsed = parseBackupText(JSON.stringify(buildBackup(data, T0 + 2 * MIN)));
+    if (!parsed.ok) throw new Error(parsed.errors.join('\n'));
+    const target = freshRepo();
+    await target.replaceWorkspace(parsed.data);
+    const restored = await target.exportWorkspace();
+    expect(restored.reviews).toEqual(data.reviews);
+    expect(restored.sessions).toEqual(data.sessions);
   });
 });
 
