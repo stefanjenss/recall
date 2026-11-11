@@ -4,11 +4,11 @@
 
 import type { IDBPTransaction } from 'idb';
 import { validateRecord, type WorkspaceData } from '../content/backup';
-import { sameChoices, shuffledOptions } from '../domain/choices';
+import { canQuickCheck, sameChoices, shuffledOptions } from '../domain/choices';
 import { newId } from '../domain/ids';
 import { duplicateKey, LIMITS, overLimitMessage, validateCardInput } from '../domain/limits';
 import { buildQueue, ineligibility } from '../domain/queue';
-import { applyQuickCheck, applyRating, initialSchedule, snapshotOf } from '../domain/scheduler';
+import { applyQuickCheck, applyRating, initialSchedule, QUICK_CHECK_LIMIT, snapshotOf } from '../domain/scheduler';
 import { upgradeRecord } from '../domain/upgrade';
 import { browserTimeZone, isValidTimeZone } from '../domain/time';
 import type {
@@ -117,6 +117,12 @@ export type StartResult =
 
 export type CommitResult =
   | { status: 'committed' | 'duplicate'; review: Review; state: PracticeState }
+  | { status: 'stale'; reason: 'session-changed' | 'reviewed-elsewhere' | 'edited'; state: PracticeState | null }
+  | { status: 'ineligible'; reason: 'deleted' | 'paused'; state: PracticeState };
+
+/** Switching a full-recall attempt to its options. Stale and ineligible mean the same as for a commit. */
+export type ShowOptionsResult =
+  | { status: 'switched'; state: PracticeState }
   | { status: 'stale'; reason: 'session-changed' | 'reviewed-elsewhere' | 'edited'; state: PracticeState | null }
   | { status: 'ineligible'; reason: 'deleted' | 'paused'; state: PracticeState };
 
@@ -777,7 +783,7 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
     return session.attempt;
   }
 
-  /** Persist the in-progress answer. Ignored once the attempt is revealed or replaced. */
+  /** Persist the in-progress answer. Ignored once the attempt is revealed, switched to options, or replaced. */
   async function saveDraft(
     sessionId: string,
     attemptId: string,
@@ -786,7 +792,7 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
     return run(['sessions'], 'readwrite', async (tx) => {
       const session = await tx.objectStore('sessions').get(sessionId);
       const attempt = matchAttempt(session, attemptId);
-      if (!session || !attempt || attempt.revealed) return false;
+      if (!session || !attempt || attempt.revealed || attempt.options) return false;
       session.attempt = { ...attempt, response: draft.response, confidence: draft.confidence };
       await tx.objectStore('sessions').put(session);
       return true;
@@ -830,6 +836,55 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
         await tx.objectStore('sessions').put(session);
       }
       return loadState(tx, session);
+    });
+  }
+
+  /**
+   * Turn an unrevealed full-recall attempt into a quick check on the same card,
+   * for when the learner is drawing a blank. The attempt keeps its ID, so the
+   * pick commits through `commitQuickCheck` exactly like a quick-check session.
+   * The typed draft and confidence are frozen onto the attempt and saved with
+   * the review as a record; only the pick is scored. One way: once the options
+   * are on screen, the attempt can't go back to full recall. Like `reveal`, this
+   * writes only the active session, which doesn't sync, so nothing is queued.
+   */
+  async function showOptions(
+    sessionId: string,
+    attemptId: string,
+    draft: { response: string; confidence: Confidence | null },
+  ): Promise<ShowOptionsResult> {
+    const tooLong = overLimitMessage('Your answer', draft.response, LIMITS.response);
+    if (tooLong) throw new ValidationError(tooLong);
+    return run(SESSION_STORES, 'readwrite', async (tx) => {
+      const session = await tx.objectStore('sessions').get(sessionId);
+      const attempt = matchAttempt(session, attemptId);
+      if (!session || !attempt) {
+        return { status: 'stale', reason: 'session-changed', state: session ? await loadState(tx, session) : null };
+      }
+      // Already showing options (a retry, or a quick-check session): keep the order shown.
+      if (attempt.options) return { status: 'switched', state: await loadState(tx, session) };
+      if (attempt.revealed) throw new ValidationError('The answer is already showing. Rate your recall instead.');
+
+      const state = await loadState(tx, session);
+      const { card, schedule } = state;
+      if (!card || !schedule || card.deletedAt !== null) return { status: 'ineligible', reason: 'deleted', state };
+      if (schedule.paused) return { status: 'ineligible', reason: 'paused', state };
+      if (schedule.stateVersion !== attempt.expectedStateVersion) return { status: 'stale', reason: 'reviewed-elsewhere', state };
+      if (card.contentVersion !== attempt.cardVersion) return { status: 'stale', reason: 'edited', state };
+      if (!card.choices) throw new ValidationError('This card has no multiple-choice options.');
+      if (!canQuickCheck(card, schedule)) {
+        throw new ValidationError(`This card has had ${QUICK_CHECK_LIMIT} quick checks in a row, so it needs a full recall now.`);
+      }
+
+      session.attempt = {
+        ...attempt,
+        response: draft.response,
+        confidence: draft.confidence,
+        options: shuffledOptions(card.choices, Math.random),
+        picked: null,
+      };
+      await tx.objectStore('sessions').put(session);
+      return { status: 'switched', state: { session, card, schedule } };
     });
   }
 
@@ -992,7 +1047,10 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
     });
   }
 
-  /** Start a fresh attempt on the updated card, keeping the learner's draft. */
+  /**
+   * Start a fresh attempt on the updated card, keeping the learner's draft. An
+   * attempt that was switched to options stays a quick check if the card still has them.
+   */
   async function refreshAttempt(sessionId: string, attemptId: string, now: number): Promise<PracticeState | null> {
     return run(SESSION_STORES, 'readwrite', async (tx) => {
       const session = await tx.objectStore('sessions').get(sessionId);
@@ -1012,7 +1070,7 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
         await markSession(tx, session, now);
         return state;
       }
-      session.attempt = newAttempt(card, schedule, session.mode, now, attempt);
+      session.attempt = newAttempt(card, schedule, attempt.options ? 'quick-check' : session.mode, now, attempt);
       await tx.objectStore('sessions').put(session);
       return { session, card, schedule };
     });
@@ -1145,6 +1203,7 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
     saveDraft,
     reveal,
     pickOption,
+    showOptions,
     commitReview,
     commitQuickCheck,
     skipCurrent,

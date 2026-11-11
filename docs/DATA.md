@@ -28,7 +28,10 @@ Types are defined in `src/domain/types.ts`.
   both reviews are kept but the schedule comes from the later one, so the count is one lower than the history.
 - `quickChecksSinceRecall` is at most 2. A full-recall review resets it to 0.
 - A review has `mode: 'recall'` with a rating 1–4 and `quickCheck: null`, or `mode: 'quick-check'` with
-  `rating: null` and a `quickCheck` result.
+  `rating: null` and a `quickCheck` result. A review's mode is the attempt's, not the session's: a full-recall session
+  can hold quick-check reviews for cards switched to their options ("Show options"), and those keep any typed
+  `response` and `confidence`.
+- An attempt is a quick check exactly when its `options` is non-null.
 - `stateVersion` increases on every schedule change (review, pause, resume, reset). `contentVersion` increases on
   every content edit. Attempts record both and are rejected at commit if either has moved.
 - At most one session has `status: 'active'`.

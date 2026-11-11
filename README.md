@@ -28,7 +28,7 @@ More screenshots, at desktop and phone widths, are in [`docs/screenshots/`](docs
 - **Quick checks:** a lighter, multiple-choice session for cards that have options. Pick with 1–4, see the right answer
   and the full explanation, and continue with Space. Recognition is easier than recall, so a correct pick never
   lengthens a card's interval, a miss counts as Again, and after two quick checks in a row a card waits for a full
-  recall.
+  recall. Drawing a blank on one card in a full-recall session? Show options turns just that card into a quick check.
 - **Collection:** search, filter by topic and status, edit cards, inspect a card's schedule and history, pause or
   resume, reset progress, or delete.
 - **Add knowledge:** write cards (Markdown, including code blocks), or copy a ready-made prompt into any AI assistant
