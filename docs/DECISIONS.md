@@ -11,7 +11,7 @@ implementation differs from the PRD's proposed defaults, it says so.
 | Build      | Vite 7                                                        | The PRD default. Vite 8 was available, but 7.x is a maintained line I can vouch for.                                                                                                                   |
 | Storage    | IndexedDB via [`idb`](https://github.com/jakearchibald/idb) 8 | The PRD default. `idb` is a ~1 kB promise wrapper; transactions remain explicit.                                                                                                                       |
 | Markdown   | `markdown-it` 14, `html: false`, images disabled              | Escapes raw HTML by design, so no HTML sanitizer is needed. Link protocols are restricted to http(s), mailto, and relative links. Images are disabled so card content never triggers network requests. |
-| Fonts      | DM Sans and Libre Caslon Display, bundled via `@fontsource`   | Both are SIL Open Font License. Self-hosting means no Google Fonts requests, keeping the "no external calls" promise.                                                                                  |
+| Fonts      | DM Sans, bundled via `@fontsource`                            | SIL Open Font License. Self-hosting means no Google Fonts requests, keeping the "no external calls" promise.                                                                                           |
 | Routing    | Hand-written hash router (`src/app/router.ts`)                | Seven routes don't justify a dependency, and hash routing works on any static host without rewrites.                                                                                                   |
 | Unit tests | Vitest 3.2 + `fake-indexeddb`                                 | Vitest 4 hit an npm resolver bug (`Cannot read properties of null (reading 'edgesOut')`) through its optional peers; 3.2 installs cleanly and supports Vite 7.                                         |
 | E2E tests  | Playwright 1.56 + `@axe-core/playwright`                      | Pinned to match the Chromium build in the development container. A package `override` keeps axe on the same `playwright-core`.                                                                         |
@@ -62,8 +62,8 @@ All dependency versions are pinned exactly in `package.json`, and `package-lock.
 - **Reading size** scales the root font size (100%, 112.5%, 125%). The whole interface scales, not just study text.
 - **Persistent storage** is requested automatically once the collection has a card, and on demand from Settings.
   Denial is reported plainly.
-- **Mobile navigation** is a top bar with a Menu disclosure (not a modal drawer), so every destination stays one tap
-  away without trapping focus.
+- **Mobile navigation** is a floating bottom tab bar (Today, Cards, Add, Progress) plus a More button that opens a small
+  sheet with The method and Settings. The sheet is a disclosure, not a modal, so it never traps focus; Escape closes it.
 - **Spelling** is American English.
 
 ## Quick checks (October 2026)
@@ -254,7 +254,56 @@ authentication, storage, backups, running cost, and the reason; those are covere
 - **Not done:** per-device keys, pairing by QR code, end-to-end encryption of the server copy, and automatic
   server-side backup rotation (the `backup` command plus cron covers it).
 
+## Visual redesign (November 2026)
+
+The owner asked for a look inspired by Monzo's app: friendlier, bolder, with gradients and glassy depth. It replaces the
+original cream-and-green editorial design (serif headings, 2px corners, ruled rows).
+
+- **Borrow the structure, not the brand.** Rounded cards on a soft background, one bold sans serif, pill buttons, a
+  feed of rows, a floating tab bar, and a large headline figure come from that inspiration. The palette, logo, and
+  typeface are Recall's own, so the app doesn't read as a clone.
+- **Palette.** Ink `#0e211b`, off-white `#f3f5f1`, white cards, and one accent green `#08703f`, with mint `#7be3a8`
+  for highlights on ink. The accent is slightly darker than first drawn so links keep 4.5:1 on the mint wash.
+- **One typeface.** DM Sans everywhere; Libre Caslon Display was removed. Study text sizes are unchanged.
+- **Gradients.** A mint wash with a faint warm glow behind the top 30rem of every page, and a gradient on the Today
+  hero. Nothing else is graded except a slight shade on primary buttons.
+- **Glass.** The tab bar, the phone's top controls, the More sheet, the desktop sidebar, panels, and stat tiles are
+  translucent with a backdrop blur. The practice card and lists stay opaque so study text never sits on a blur.
+  `prefers-reduced-transparency` swaps the glass tokens for solid paper.
+- **Top controls scroll away.** On phones the wordmark and due count are separate pills, not a sticky bar, so they
+  never cover content. The tab bar is the fixed navigation.
+- **No tab bar during practice.** One question at a time; the wordmark and End session lead out.
+- **Short tab labels.** "Cards" and "Add" stand for Collection and Add knowledge, because five full names don't fit at
+  320px. Below 344px the labels drop to 13px, the one place under the 14px metadata minimum.
+- **Option groups wrap.** Segmented options keep each label on one line and wrap as whole options when a row is full.
+- **State is never color alone.** The current tab is bold on a tinted pill; a checked option has a filled radio mark
+  and a heavier border; ratings pair a colored dot with a label and description; quick-check results carry a mark and
+  the words "Correct answer" or "Your pick".
+
+Contrast (WCAG ratio; 4.5:1 needed for text, 3:1 for control borders). axe cannot measure text over gradients or blur,
+so the wash and hero rows were calculated by hand against the darkest or lightest point the text can sit on.
+
+| Pair                                        | Ratio     |
+| ------------------------------------------- | --------- |
+| Ink on background                           | 15.3      |
+| Ink on the wash (top, `#c9f0d9`)            | 13.5      |
+| Secondary text on background                | 6.0       |
+| Secondary text on white                     | 6.6       |
+| Secondary text on the wash (top)            | 5.4       |
+| Secondary text on mint-soft / warn-soft     | 5.9       |
+| Accent green on white                       | 6.2       |
+| Accent green on background                  | 5.6       |
+| Accent green on the wash (top)              | 5.0       |
+| Accent green on mint-soft                   | 5.5       |
+| White on accent green (button, lighter end) | 5.3       |
+| White on the hero (lightest end, `#17503a`) | 9.4       |
+| Hero secondary text on the hero (lightest)  | 6.0       |
+| Mint on the hero (lightest)                 | 6.0       |
+| Danger on white / on danger-soft            | 6.5 / 5.6 |
+| Warning text on warn-soft                   | 6.4       |
+| Control border on white                     | 3.6       |
+
 ## Not done, on purpose
 
-- No dark mode. The PRD centers the cream-and-green identity; a dark variant should be designed, not inverted.
+- No dark mode. A dark variant should be designed, not inverted.
 - No AI. The Settings page says so plainly. See the README roadmap.

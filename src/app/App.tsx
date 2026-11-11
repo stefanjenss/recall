@@ -18,14 +18,48 @@ import { useWorkspace, WorkspaceProvider } from './workspace';
 
 type Destination = 'today' | 'collection' | 'add' | 'progress' | 'method' | 'settings' | 'practice';
 
-const NAV: Array<{ key: Destination; label: string; path: string }> = [
-  { key: 'today', label: 'Today', path: '' },
-  { key: 'collection', label: 'Collection', path: 'collection' },
-  { key: 'add', label: 'Add knowledge', path: 'add' },
-  { key: 'progress', label: 'Progress', path: 'progress' },
+type NavKey = Exclude<Destination, 'practice'>;
+
+/** `tab` is the short label on the phone tab bar; destinations without one sit under More. */
+const NAV: Array<{ key: NavKey; label: string; path: string; tab?: string }> = [
+  { key: 'today', label: 'Today', path: '', tab: 'Today' },
+  { key: 'collection', label: 'Collection', path: 'collection', tab: 'Cards' },
+  { key: 'add', label: 'Add knowledge', path: 'add', tab: 'Add' },
+  { key: 'progress', label: 'Progress', path: 'progress', tab: 'Progress' },
   { key: 'method', label: 'The method', path: 'method' },
   { key: 'settings', label: 'Settings', path: 'settings' },
 ];
+const TABS = NAV.filter((item) => item.tab);
+const MORE = NAV.filter((item) => !item.tab);
+
+const ICON_PATHS: Record<NavKey | 'more', string> = {
+  today: 'M3.5 11 12 4l8.5 7v7.5a1.5 1.5 0 0 1-1.5 1.5h-4v-6h-6v6H5a1.5 1.5 0 0 1-1.5-1.5Z',
+  collection: 'M7 4.5h10M5.5 8h13M5 11.5h14a1 1 0 0 1 1 1V19a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-6.5a1 1 0 0 1 1-1Z',
+  add: 'M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17ZM12 8v8M8 12h8',
+  progress: 'M5 20v-8M12 20V4M19 20v-5',
+  method: 'M9.5 18h5M10.5 21h3M12 3a6 6 0 0 0-4 10.5c.8.8 1.2 1.5 1.3 2.5h5.4c.1-1 .5-1.7 1.3-2.5A6 6 0 0 0 12 3Z',
+  settings:
+    'M4 7h9M19 7h1M4 17h1M11 17h9M16 4.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5ZM8 14.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5Z',
+  more: 'M5 12h.01M12 12h.01M19 12h.01',
+};
+
+function NavIcon({ name }: { name: NavKey | 'more' }) {
+  return (
+    <svg
+      className="nav__icon"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={name === 'more' ? 3 : 1.8}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path d={ICON_PATHS[name]} />
+    </svg>
+  );
+}
 
 function destinationOf(route: Route): Destination {
   const [first] = route.segments;
@@ -96,6 +130,15 @@ function Shell() {
   }, [routeKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
+    if (!menuOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMenuOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [menuOpen]);
+
+  useEffect(() => {
     const titles: Record<Destination, string> = {
       today: 'Today',
       collection: 'Collection',
@@ -108,12 +151,13 @@ function Shell() {
     document.title = `${titles[current]} · recall.`;
   }, [current]);
 
-  const nav = (
+  const navList = (items: typeof NAV) => (
     <ul className="nav__list">
-      {NAV.map((item) => (
+      {items.map((item) => (
         <li key={item.key}>
           <a className="nav__link" href={href(item.path)} aria-current={current === item.key ? 'page' : undefined}>
-            <span>{item.label}</span>
+            <NavIcon name={item.key} />
+            <span className="nav__label">{item.label}</span>
             {item.key === 'today' && summary.dueCount > 0 ? (
               <span className="nav__count" aria-label={`${summary.dueCount} due`}>
                 {summary.dueCount}
@@ -125,8 +169,12 @@ function Shell() {
     </ul>
   );
 
+  // Practice is one question at a time: the tab bar steps aside, and the top bar still leads home.
+  const showTabs = current !== 'practice';
+  const moreIsCurrent = MORE.some((item) => item.key === current);
+
   return (
-    <div className="app">
+    <div className={`app${showTabs ? ' app--tabbed' : ''}`}>
       <a
         className="skip-link"
         href="#main"
@@ -144,7 +192,7 @@ function Shell() {
             <Wordmark />
           </a>
           <nav className="nav" aria-label="Main">
-            {nav}
+            {navList(NAV)}
           </nav>
           {summary.topics.length > 0 ? (
             <nav className="sidebar__topics" aria-label="Topics">
@@ -181,20 +229,8 @@ function Shell() {
               {summary.dueCount} due
             </a>
           ) : null}
-          <button
-            type="button"
-            className="topbar__menu button button--secondary button--small"
-            aria-expanded={menuOpen}
-            aria-controls="mobile-nav"
-            onClick={() => setMenuOpen((o) => !o)}
-          >
-            Menu
-          </button>
         </div>
       </header>
-      <nav id="mobile-nav" className="mobile-nav" aria-label="Main" hidden={!menuOpen}>
-        {nav}
-      </nav>
 
       <main id="main" ref={mainRef} tabIndex={-1} className="main">
         {ws.versionChanged ? (
@@ -224,6 +260,47 @@ function Shell() {
         ) : null}
         <Screen route={route} />
       </main>
+
+      {showTabs ? (
+        <>
+          <nav id="more-nav" className="more-sheet" aria-label="More" hidden={!menuOpen}>
+            {navList(MORE)}
+          </nav>
+          <nav className="tabbar" aria-label="Main">
+            <ul className="tabbar__list">
+              {TABS.map((item) => (
+                <li key={item.key}>
+                  <a
+                    className={`tabbar__item${current === item.key && !menuOpen ? ' is-current' : ''}`}
+                    href={href(item.path)}
+                    aria-current={current === item.key ? 'page' : undefined}
+                  >
+                    <NavIcon name={item.key} />
+                    <span className="tabbar__label">{item.tab}</span>
+                    {item.key === 'today' && summary.dueCount > 0 ? (
+                      <span className="tabbar__badge" aria-label={`${summary.dueCount} due`}>
+                        {summary.dueCount > 99 ? '99+' : summary.dueCount}
+                      </span>
+                    ) : null}
+                  </a>
+                </li>
+              ))}
+              <li>
+                <button
+                  type="button"
+                  className={`tabbar__item${moreIsCurrent || menuOpen ? ' is-current' : ''}`}
+                  aria-expanded={menuOpen}
+                  aria-controls="more-nav"
+                  onClick={() => setMenuOpen((o) => !o)}
+                >
+                  <NavIcon name="more" />
+                  <span className="tabbar__label">More</span>
+                </button>
+              </li>
+            </ul>
+          </nav>
+        </>
+      ) : null}
     </div>
   );
 }

@@ -22,7 +22,7 @@ The owner wants an Anki-like review mechanism with a substantially more readable
 
 - Accept concepts and terms and turn them into reviewable flashcards, including cards prepared by an external AI assistant.
 - Support spaced repetition, interleaving, active recall, and other relevant principles from *Make It Stick*.
-- Preserve the existing cream-and-green visual identity and improve reading comfort.
+- Keep a calm green visual identity and improve reading comfort. (Revised November 2026: the owner replaced the original cream-and-green editorial look with the design in section 10.)
 - Use large, well-spaced text for prompts, responses, answers, and feedback.
 - Avoid a generic rounded-card dashboard aesthetic.
 - Define AI answer grading with clear feedback about correct and missing aspects.
@@ -291,28 +291,28 @@ If enabled, accept concepts or pasted notes, desired topics, and a bounded card 
 
 ## 10. Visual and interaction requirements
 
-Preserve the existing editorial direction: warm paper, forest green, muted olive, pale lime accents, fine separators, generous space, a serif for display headings, and a legible sans serif for study content. Use the lowercase recall. wordmark and understated stacked-card motif. Illustration is optional; reading is the priority.
+The owner revised the visual direction in November 2026 (see `docs/DECISIONS.md`, "Visual redesign"). The look takes its structure from modern banking apps: a deep ink, a soft off-white, one vivid green accent, rounded cards, pill buttons, one bold sans serif throughout, a soft gradient wash behind the top of each page, and frosted translucent surfaces for depth. It borrows that structure and feel, not another product's colors, logo, or typeface. Use the lowercase recall. wordmark with the two tilted outlined cards. Illustration is optional; reading is the priority.
 
 | Token | Reference value |
 | --- | --- |
-| Background | #F8F8F3 |
-| Paper | #FFFFFA |
-| Main text | #282F28 |
-| Secondary text | #606C59 |
-| Divider | #DDDFD5 |
-| Primary green | #344738 |
-| Lime accent | #DCE5AC |
-| Display font | Libre Caslon Display or a suitable serif fallback |
-| Reading font | DM Sans or a suitable sans serif fallback |
+| Background | #F3F5F1 |
+| Paper (cards) | #FFFFFF |
+| Main text (ink) | #0E211B |
+| Secondary text | #51605A |
+| Divider | #DFE4DD |
+| Accent green | #08703F |
+| Mint highlight | #7BE3A8 |
+| Font | DM Sans or a suitable sans serif fallback, for display and reading |
 
 Treat palette values as the starting point; adjust pairings when contrast tests fail. Bundle fonts where licensing permits, with functional fallbacks.
 
 - Default study body text: 18 px minimum, using scalable rem units. Answers/feedback: 20 px default. Inputs: 18 px. Question text: 26–34 px depending on viewport. Secondary metadata: at least 14 px.
 - Study body line height: approximately 1.7–1.85. Limit answers and feedback to roughly 55–70 characters per line. Avoid excessive tracking in reading content.
-- Use the sans serif for prompts, answers, input, explanations, and code-adjacent content. Reserve the decorative serif for short display copy.
-- Rectangular panels and rows, minimal rounding (typically 0–6 px), few shadows, no pervasive pills or bubbly dashboard tiles.
-- Desktop: approximately 256 px sidebar with navigation and topics; main workspace with a compact top bar.
-- Mobile/tablet: compact navigation without losing destinations; single-column reading; rating controls in a clear 2×2 grid when needed; no hover-only actions.
+- Use the one sans serif for everything. Display copy (page titles, the due count, questions) is set bold and tight; reading copy keeps a regular weight.
+- Rounded cards (about 20 px) on the soft background, rounded controls (about 12 px), pill buttons, and soft shadows. Lists read as feeds: one card with a row per item.
+- Gradients stay quiet: a wash behind the top of the page and on the hero card. Frosted surfaces (tab bar, top controls, sidebar, panels) add depth; surfaces that hold study text (the practice card, lists) stay opaque. Honor the reduced-transparency setting with solid surfaces.
+- Desktop: approximately 256 px sidebar with navigation and topics beside the main workspace.
+- Mobile/tablet: a floating bottom tab bar for the main destinations, with the rest one tap away under More; single-column reading; rating controls in a clear 2×2 grid when needed; no hover-only actions. The tab bar steps aside during practice.
 - Focus attention on one question. Do not hide essential text behind animation or require flipping a decorative 3D card.
 - Provide reading-size preferences and persist them. Content must remain usable at 200% zoom and reflow at 320 CSS px. Only intrinsically wide code/table content may scroll horizontally within its own region.
 - Use at least 44×44 px touch targets as a product standard, visible keyboard focus, proper labels, semantic landmarks, and modal focus management. Rating states and errors must not rely on color alone.
@@ -449,7 +449,7 @@ After the owner chooses and authorizes an inference route, add rubric authoring,
 
 ### Copyable instruction for the receiving agent
 
-> Build Recall according to this PRD. Treat confirmed requirements as binding and proposed defaults as the initial implementation plan. Start by reading the entire document, then present a brief milestone plan and record material technical choices. Implement the complete P0 workflow before optional AI features. Preserve the cream-and-green editorial theme, large readable study text, and restrained rectangular layouts. The app must run without ChatGPT Sites or inference credentials. Keep scheduling pure, reviews atomic and idempotent, and data portable. Do not claim cross-device sync, AI grading, Anki compatibility, or completed checks unless those capabilities actually work and have been verified. For embedded AI, first establish an owner-approved, documented inference route; retain the manual fallback. Deliver the runnable repository, setup instructions, tests, screenshots, and acceptance checklist.
+> Build Recall according to this PRD. Treat confirmed requirements as binding and proposed defaults as the initial implementation plan. Start by reading the entire document, then present a brief milestone plan and record material technical choices. Implement the complete P0 workflow before optional AI features. Follow the visual direction in section 10 (ink, off-white, one green accent, rounded cards, quiet gradients and glass) and keep study text large and readable. The app must run without ChatGPT Sites or inference credentials. Keep scheduling pure, reviews atomic and idempotent, and data portable. Do not claim cross-device sync, AI grading, Anki compatibility, or completed checks unless those capabilities actually work and have been verified. For embedded AI, first establish an owner-approved, documented inference route; retain the manual fallback. Deliver the runnable repository, setup instructions, tests, screenshots, and acceptance checklist.
 
 ## 17. References and open decisions
 

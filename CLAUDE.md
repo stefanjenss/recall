@@ -41,9 +41,14 @@ spec is `docs/PRD.md`; read the relevant section before changing behavior.
 
 ## UI conventions
 
-- Design tokens live in `src/ui/styles/tokens.css`. Rectangular panels (2px radius), fine rules, no pervasive pills or
-  shadows, 44px minimum touch targets, and rem units throughout. Study text: 18px body and inputs, 20px answers, 26–34px
-  questions.
+- Design tokens live in `src/ui/styles/tokens.css`: a deep ink, a soft off-white, one green accent. Rounded cards
+  (`--radius-card`), rounded controls (`--radius`), pill buttons, soft shadows, and DM Sans throughout (bold and tight for
+  display copy). 44px minimum touch targets and rem units throughout. Study text: 18px body and inputs, 20px answers,
+  26–34px questions.
+- Gradients and glass stay quiet: the page wash (`--wash`), the hero (`--hero`), and frosted chrome and panels
+  (`--glass*`). Surfaces that hold study text stay opaque. axe can't measure text over gradients or blur, so check new
+  pairs by hand against the table in `docs/DECISIONS.md`.
+- Phones navigate with the floating tab bar (four tabs plus More); it's hidden during practice. Desktop uses the sidebar.
 - Never show state by color alone; pair it with text or shape.
 - Keep copy honest: self-ratings are "self-reported", long intervals are "spacing, not mastery", and there's no AI in P0.
 - American English.

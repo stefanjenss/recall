@@ -373,7 +373,12 @@ export function Today() {
               {summary.topics.map((t) => (
                 <tr key={t.topic}>
                   <th scope="row">
-                    <a href={href('collection', { topic: t.topic })}>{t.topic}</a>
+                    <a href={href('collection', { topic: t.topic })}>
+                      <span className={`topic-avatar topic-avatar--${avatarTint(t.topic)}`} aria-hidden="true">
+                        {t.topic.trim().charAt(0).toUpperCase()}
+                      </span>
+                      <span className="topic-name">{t.topic}</span>
+                    </a>
                   </th>
                   <td className="num">{t.cards}</td>
                   <td className="num">{t.due}</td>
@@ -406,6 +411,13 @@ export function Today() {
       </aside>
     </div>
   );
+}
+
+/** A stable tint (0–4) per topic name, so each topic keeps its avatar color. */
+function avatarTint(topic: string): number {
+  let sum = 0;
+  for (const ch of topic) sum = (sum + ch.codePointAt(0)!) % 5;
+  return sum;
 }
 
 /** A recent sync means the server holds a copy, so the backup reminder can rest. */

@@ -37,7 +37,16 @@ const viewports = {
 for (const [label, options] of Object.entries(viewports)) {
   const context = await browser.newContext({ ...options, timezoneId: 'America/New_York' });
   const page = await context.newPage();
-  const shot = (name, fullPage = false) => page.screenshot({ path: new URL(`${label}-${name}.png`, OUT).pathname, fullPage });
+  // A full-page capture would paint the fixed tab bar across the middle of the page, so it sits at the end instead.
+  const shot = async (name, fullPage = false) => {
+    const unfix = fullPage
+      ? await page.addStyleTag({
+          content: '.tabbar { position: static !important; margin-top: -4.5rem; margin-bottom: 0.6rem; }',
+        })
+      : null;
+    await page.screenshot({ path: new URL(`${label}-${name}.png`, OUT).pathname, fullPage });
+    await unfix?.evaluate((el) => el.remove());
+  };
 
   await page.goto(BASE);
   await page.getByRole('button', { name: 'Add six starter cards' }).click();

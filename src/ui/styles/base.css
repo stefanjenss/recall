@@ -11,7 +11,10 @@ html {
 
 body {
   margin: 0;
-  background: var(--bg);
+  background-color: var(--bg);
+  background-image: var(--wash);
+  background-repeat: no-repeat;
+  background-size: 100% 30rem;
   color: var(--ink);
   font-family: var(--font-sans);
   font-size: var(--text-ui);
@@ -26,14 +29,15 @@ h3,
 h4 {
   margin: 0;
   line-height: 1.2;
-  font-weight: 600;
+  font-weight: 700;
+  letter-spacing: -0.01em;
 }
 
 h1 {
   font-family: var(--font-display);
-  font-weight: 400;
-  font-size: clamp(2rem, 1.6rem + 1.4vw, 2.75rem);
-  letter-spacing: -0.005em;
+  font-size: clamp(2rem, 1.7rem + 1.2vw, 2.625rem);
+  letter-spacing: -0.03em;
+  line-height: 1.1;
 }
 
 h1:focus {
@@ -80,7 +84,7 @@ kbd {
   padding: 0 0.35em;
   border: 1px solid var(--rule-strong);
   border-bottom-width: 2px;
-  border-radius: var(--radius);
+  border-radius: 0.375rem;
   font-size: 0.8em;
   line-height: 1.4;
   text-align: center;
@@ -125,6 +129,7 @@ textarea {
   top: -10rem;
   z-index: 100;
   padding: 0.75rem 1rem;
+  border-radius: var(--radius-pill);
   background: var(--green);
   color: var(--on-green);
 }
@@ -157,7 +162,7 @@ textarea {
   padding: 0.1em 0.3em;
   background: var(--paper-shade);
   border: 1px solid var(--rule);
-  border-radius: var(--radius);
+  border-radius: 0.375rem;
   overflow-wrap: anywhere;
 }
 
@@ -167,7 +172,6 @@ textarea {
   padding: 1rem 1.1rem;
   background: var(--paper-shade);
   border: 1px solid var(--rule);
-  border-left: 3px solid var(--olive);
   border-radius: var(--radius);
   line-height: 1.55;
   font-size: 0.85em;

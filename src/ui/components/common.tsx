@@ -270,12 +270,27 @@ export function CharCount({ count, limit }: { count: number; limit: number }) {
 }
 
 export function Wordmark() {
+  // Two tilted cards in outline; the mask hides the back card where the front one covers it.
+  const maskId = useId();
+  const front = { x: 9.5, y: 4.5, width: 13, height: 18, rx: 1.3, transform: 'rotate(13 16 13.5)' };
   return (
     <span className="wordmark">
-      <svg className="wordmark__motif" viewBox="0 0 28 24" aria-hidden="true" focusable="false">
-        <rect x="7.5" y="1.5" width="19" height="13" fill="none" stroke="currentColor" strokeWidth="1.2" opacity="0.45" />
-        <rect x="4.5" y="4.5" width="19" height="13" fill="var(--paper)" stroke="currentColor" strokeWidth="1.2" opacity="0.75" />
-        <rect x="1.5" y="7.5" width="19" height="13" fill="var(--lime)" stroke="currentColor" strokeWidth="1.4" />
+      <svg
+        className="wordmark__motif"
+        viewBox="0 0 28 28"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinejoin="round"
+        aria-hidden="true"
+        focusable="false"
+      >
+        <mask id={maskId} maskUnits="userSpaceOnUse" x="0" y="0" width="28" height="28">
+          <rect width="28" height="28" fill="#fff" stroke="none" />
+          <rect {...front} fill="#000" stroke="#000" />
+        </mask>
+        <rect x="6" y="5.5" width="13" height="18" rx="1.3" transform="rotate(-12 12.5 14.5)" mask={`url(#${maskId})`} />
+        <rect {...front} />
       </svg>
       <span className="wordmark__text">
         recall<span className="wordmark__dot">.</span>
