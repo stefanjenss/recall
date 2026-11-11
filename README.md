@@ -32,7 +32,8 @@ More screenshots, at desktop and phone widths, are in [`docs/screenshots/`](docs
 - **Collection:** search, filter by topic and status, edit cards, inspect a card's schedule and history, pause or
   resume, reset progress, or delete.
 - **Add knowledge:** write cards (Markdown, including code blocks), or copy a ready-made prompt into any AI assistant
-  and paste its JSON back in. Every import is validated and previewed before anything is saved.
+  and paste its JSON back in. Cards made before options existed can get them the same way, matched by card ID. Every
+  import is validated and previewed before anything is saved.
 - **Progress:** 14-day activity, self-ratings (labelled as self-reported), cards with long intervals, a confidence vs.
   self-rating comparison, and your saved reflections.
 - **Settings:** reading size, default session size, timezone, sync between devices, full backups and restore, content

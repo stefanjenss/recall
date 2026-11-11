@@ -246,6 +246,12 @@ export function Today() {
                     ? `; ${summary.dueNoOptions} ha${summary.dueNoOptions === 1 ? 's' : 've'} no multiple-choice options`
                     : ''}
                   . Correct picks bring a card back in a day or two without lengthening its interval; a miss counts as Again.
+                  {summary.dueNoOptions > 0 ? (
+                    <>
+                      {' '}
+                      <a href={href('add/options')}>Add options to existing cards</a>.
+                    </>
+                  ) : null}
                 </p>
               ) : null}
               <Segmented
