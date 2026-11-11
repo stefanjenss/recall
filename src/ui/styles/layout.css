@@ -1,5 +1,5 @@
-/* App shell: a ~256px sidebar on wide screens; a compact top bar with a
-   disclosure menu on phones and portrait tablets. */
+/* App shell: a ~256px sidebar on wide screens; on phones and portrait tablets
+   a compact top bar and a bottom tab bar, with the last two destinations under More. */
 
 .app {
   min-height: 100vh;
@@ -10,9 +10,9 @@
   display: none;
 }
 
+/* The top controls scroll away with the page, so they never cover content; the tab bar stays put. */
 .topbar {
-  position: sticky;
-  top: 0;
+  position: relative;
   z-index: 10;
   display: flex;
   align-items: center;
@@ -21,12 +21,27 @@
   min-height: 3.5rem;
   padding: 0.5rem var(--gutter);
   padding-top: max(0.5rem, env(safe-area-inset-top));
-  background: var(--bg);
-  border-bottom: 1px solid var(--rule);
+  /* No bar: the brand and status float over the page as frosted pills. */
+  pointer-events: none;
+}
+
+.topbar__brand,
+.topbar__status > * {
+  pointer-events: auto;
 }
 
 .topbar__brand {
-  color: var(--green);
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--touch);
+  padding: 0 0.95rem 0 0.75rem;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-pill);
+  background: var(--glass-chrome);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: var(--shadow-card);
+  color: var(--ink);
   text-decoration: none;
 }
 
@@ -37,28 +52,30 @@
 }
 
 .topbar__due {
-  font-size: var(--text-meta);
-  font-weight: 600;
-  color: var(--green);
-  min-height: var(--touch);
   display: inline-flex;
   align-items: center;
-}
-
-.mobile-nav {
-  border-bottom: 1px solid var(--rule);
-  background: var(--paper);
-  padding: 0.25rem var(--gutter) 0.75rem;
-}
-
-.mobile-nav[hidden] {
-  display: none;
+  min-height: var(--touch);
+  padding: 0 0.9rem;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-pill);
+  background: var(--glass-chrome);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: var(--shadow-card);
+  color: var(--ink);
+  font-size: var(--text-meta);
+  font-weight: 700;
+  text-decoration: none;
 }
 
 .main {
-  padding: 1.5rem var(--gutter) 4rem;
-  padding-bottom: max(4rem, env(safe-area-inset-bottom));
+  padding: 0.75rem var(--gutter) 3rem;
   max-width: 72rem;
+}
+
+/* Leave room for the fixed tab bar. */
+.app--tabbed .main {
+  padding-bottom: calc(var(--tabbar-height) + 3.5rem + env(safe-area-inset-bottom));
 }
 
 .main:focus {
@@ -69,24 +86,27 @@
   margin-bottom: 1.25rem;
 }
 
-/* Navigation list (shared by sidebar and mobile menu). */
+/* Navigation list (sidebar, and the More sheet on phones). */
 .nav__list {
   list-style: none;
   margin: 0;
   padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
 }
 
 .nav__link {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
+  gap: 0.75rem;
   min-height: var(--touch);
-  padding: 0.5rem 0.75rem;
-  border-left: 3px solid transparent;
+  padding: 0.5rem 0.85rem;
+  border-radius: var(--radius-pill);
   color: var(--ink);
   text-decoration: none;
   font-size: 1rem;
+  font-weight: 500;
 }
 
 .nav__link:hover {
@@ -94,45 +114,170 @@
 }
 
 .nav__link[aria-current='page'] {
-  border-left-color: var(--green);
-  background: var(--lime-soft);
-  font-weight: 600;
-  color: var(--green);
+  background: var(--ink);
+  color: var(--on-ink);
+  font-weight: 700;
+}
+
+.nav__icon {
+  flex: none;
+  width: 1.375rem;
+  height: 1.375rem;
+}
+
+.nav__label {
+  flex: 1;
+  min-width: 0;
 }
 
 .nav__count {
-  font-size: var(--text-meta);
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
-  padding: 0 0.4rem;
+  min-width: 1.5rem;
+  padding: 0.05rem 0.45rem;
+  border-radius: var(--radius-pill);
   background: var(--lime);
   color: var(--ink);
-  border-radius: var(--radius);
+  font-size: var(--text-meta);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  text-align: center;
+}
+
+/* Bottom tab bar (phones and portrait tablets): a floating frosted pill. */
+.tabbar {
+  position: fixed;
+  inset: auto 0.6rem calc(0.6rem + env(safe-area-inset-bottom)) 0.6rem;
+  z-index: 20;
+  max-width: 30rem;
+  margin-inline: auto;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-pill);
+  background: var(--glass-chrome);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: var(--shadow-float);
+}
+
+.tabbar__list {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  margin: 0;
+  padding: 0.25rem;
+  list-style: none;
+}
+
+.tabbar__item {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.1rem;
+  width: 100%;
+  min-width: 0;
+  min-height: calc(var(--tabbar-height) - 0.5rem);
+  padding: 0.3rem 0.1rem;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--text-meta);
+  font-weight: 500;
+  line-height: 1.2;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.tabbar__item .nav__icon {
+  width: 1.5rem;
+  height: 1.5rem;
+}
+
+.tabbar__label {
+  max-width: 100%;
+  letter-spacing: -0.015em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Five labels don't fit at 14px on the narrowest phones. */
+@media (max-width: 21.5rem) {
+  .tabbar__label {
+    font-size: 0.8125rem;
+  }
+}
+
+/* The current tab: bolder, in the accent, and sitting on a tinted pill (not color alone). */
+.tabbar__item.is-current {
+  background: rgb(14 33 27 / 0.09);
+  color: var(--green);
+  font-weight: 700;
+}
+
+.tabbar__item:focus-visible {
+  outline-offset: -3px;
+}
+
+.tabbar__badge {
+  position: absolute;
+  top: 0.2rem;
+  left: calc(50% + 0.35rem);
+  min-width: 1.25rem;
+  padding: 0 0.3rem;
+  border-radius: var(--radius-pill);
+  background: var(--green);
+  color: var(--on-green);
+  font-size: 0.75rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.25rem;
+  text-align: center;
+}
+
+/* The More sheet floats just above the tab bar. */
+.more-sheet {
+  position: fixed;
+  inset: auto 0.6rem calc(var(--tabbar-height) + 1.1rem + env(safe-area-inset-bottom)) 0.6rem;
+  z-index: 19;
+  max-width: 30rem;
+  margin-inline: auto;
+  padding: 0.5rem;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-card);
+  background: var(--glass-chrome);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: var(--shadow-float);
+}
+
+.more-sheet[hidden] {
+  display: none;
 }
 
 .wordmark {
   display: inline-flex;
   align-items: center;
-  gap: 0.55rem;
+  gap: 0.5rem;
 }
 
 .wordmark__motif {
-  width: 1.75rem;
-  height: 1.5rem;
-  color: var(--green);
+  width: 2rem;
+  height: 2rem;
+  color: var(--ink);
   flex: none;
 }
 
 .wordmark__text {
-  font-family: var(--font-display);
-  font-size: 1.75rem;
+  font-size: 1.5rem;
+  font-weight: 700;
   line-height: 1;
-  color: var(--green);
-  letter-spacing: -0.01em;
+  color: var(--ink);
+  letter-spacing: -0.03em;
 }
 
 .wordmark__dot {
-  color: var(--olive);
+  color: #7f9263; /* sage; decorative */
 }
 
 @media (min-width: 60rem) {
@@ -142,14 +287,17 @@
   }
 
   .topbar,
-  .mobile-nav {
+  .tabbar,
+  .more-sheet {
     display: none !important;
   }
 
   .sidebar {
     display: block;
-    background: var(--paper);
-    border-right: 1px solid var(--rule);
+    background: rgb(255 255 255 / 0.62);
+    border-right: 1px solid var(--glass-border);
+    -webkit-backdrop-filter: var(--glass-blur);
+    backdrop-filter: var(--glass-blur);
   }
 
   .sidebar__inner {
@@ -161,11 +309,11 @@
     height: 100vh;
     height: 100dvh;
     overflow-y: auto;
-    padding: 1.75rem 1rem 1.25rem;
+    padding: 1.75rem 0.85rem 1.25rem;
   }
 
   .sidebar__brand {
-    padding: 0 0.75rem;
+    padding: 0 0.85rem;
     text-decoration: none;
   }
 
@@ -175,7 +323,7 @@
   }
 
   .sidebar__topics .eyebrow {
-    padding: 0 0.75rem 0.5rem;
+    padding: 0 0.85rem 0.5rem;
   }
 
   .sidebar__topics ul {
@@ -188,7 +336,8 @@
     display: flex;
     justify-content: space-between;
     gap: 0.75rem;
-    padding: 0.4rem 0.75rem;
+    padding: 0.4rem 0.85rem;
+    border-radius: var(--radius-pill);
     color: var(--ink);
     text-decoration: none;
     font-size: 0.9375rem;
@@ -213,12 +362,14 @@
 
   .sidebar__foot {
     margin-top: auto;
-    padding: 0 0.75rem;
+    padding: 0 0.85rem;
     font-size: var(--text-meta);
     color: var(--ink-2);
   }
 
-  .main {
+  .main,
+  .app--tabbed .main {
     padding-top: 2.5rem;
+    padding-bottom: 4rem;
   }
 }

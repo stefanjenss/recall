@@ -1,4 +1,4 @@
-/* Shared components: rectangular, fine rules, minimal rounding, few shadows. */
+/* Shared components: rounded cards on a soft background, pill buttons, one accent. */
 
 .screen > * + * {
   margin-top: 1.75rem;
@@ -10,13 +10,12 @@
   align-items: flex-end;
   justify-content: space-between;
   gap: 1rem 1.5rem;
-  padding-bottom: 1.25rem;
-  border-bottom: 1px solid var(--rule);
 }
 
 .page-header__kicker {
-  margin-bottom: 0.35rem;
-  font-size: var(--text-meta);
+  margin-bottom: 0.25rem;
+  font-size: 0.9375rem;
+  font-weight: 500;
   color: var(--ink-2);
 }
 
@@ -29,9 +28,8 @@
 .eyebrow {
   font-family: var(--font-sans);
   font-size: var(--text-meta);
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  font-weight: 700;
+  letter-spacing: 0;
   color: var(--ink-2);
 }
 
@@ -58,9 +56,12 @@
 
 .panel {
   padding: clamp(1.1rem, 0.8rem + 1.5vw, 1.75rem);
-  background: var(--paper);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius);
+  background: var(--glass);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
 }
 
 .panel > * + * {
@@ -68,7 +69,8 @@
 }
 
 .panel--accent {
-  border-left: 4px solid var(--green);
+  border-color: transparent;
+  background: var(--lime-soft);
 }
 
 .stack {
@@ -92,11 +94,11 @@
   justify-content: center;
   gap: 0.5rem;
   min-height: var(--touch);
-  padding: 0.55rem 1.1rem;
-  border: 1px solid transparent;
-  border-radius: var(--radius);
+  padding: 0.55rem 1.25rem;
+  border: 1.5px solid transparent;
+  border-radius: var(--radius-pill);
   font-size: 1rem;
-  font-weight: 600;
+  font-weight: 700;
   line-height: 1.2;
   text-decoration: none;
   cursor: pointer;
@@ -109,7 +111,7 @@
 }
 
 .button--primary {
-  background: var(--green);
+  background: linear-gradient(180deg, #0a7c47, var(--green));
   color: var(--on-green);
   border-color: var(--green);
 }
@@ -126,12 +128,12 @@
 
 .button--secondary {
   background: var(--paper);
-  color: var(--green);
-  border-color: var(--rule-strong);
+  color: var(--ink);
+  border-color: var(--ink);
 }
 
 .button--secondary:hover:not(:disabled) {
-  background: var(--lime-soft);
+  background: var(--paper-shade);
 }
 
 .button--quiet {
@@ -140,7 +142,7 @@
   color: var(--green);
   text-decoration: underline;
   text-underline-offset: 0.18em;
-  font-weight: 500;
+  font-weight: 600;
 }
 
 .button--quiet:hover:not(:disabled) {
@@ -165,14 +167,14 @@
 
 .button--small {
   min-height: var(--touch);
-  padding: 0.35rem 0.75rem;
+  padding: 0.35rem 1rem;
   font-size: 0.9375rem;
 }
 
 .button--large {
-  min-height: 3.25rem;
-  padding: 0.75rem 1.5rem;
-  font-size: 1.0625rem;
+  min-height: 3.5rem;
+  padding: 0.75rem 1.75rem;
+  font-size: 1.125rem;
 }
 
 /* Forms */
@@ -224,9 +226,9 @@
 .dialog input[type='text'] {
   width: 100%;
   min-height: var(--touch);
-  padding: 0.6rem 0.75rem;
+  padding: 0.6rem 0.9rem;
   background: var(--paper);
-  border: 1px solid var(--rule-strong);
+  border: 1.5px solid var(--rule-strong);
   border-radius: var(--radius);
   font-size: var(--text-body);
   line-height: 1.5;
@@ -260,10 +262,10 @@
   min-height: var(--touch);
   margin-right: 0.75rem;
   padding: 0.5rem 1rem;
-  border: 1px solid var(--rule-strong);
-  border-radius: var(--radius);
+  border: 1.5px solid var(--ink);
+  border-radius: var(--radius-pill);
   background: var(--paper);
-  color: var(--green);
+  color: var(--ink);
   font: inherit;
   font-weight: 600;
   cursor: pointer;
@@ -316,7 +318,7 @@
   accent-color: var(--green);
 }
 
-/* Segmented control: native radios styled as rectangular options. */
+/* Segmented control: native radios styled as a row of rounded options. */
 .segmented {
   margin: 0;
   padding: 0;
@@ -330,10 +332,12 @@
   font-weight: 600;
 }
 
+/* Equal widths while the labels fit on one row; otherwise options wrap instead of overlapping. */
 .segmented__options {
-  display: grid;
-  grid-template-columns: repeat(var(--options, 3), minmax(0, 1fr));
-  max-width: calc(var(--options, 3) * 10rem);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  max-width: calc(var(--options, 3) * 10.5rem);
 }
 
 .segmented__option {
@@ -341,22 +345,14 @@
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  min-width: 0;
+  flex: 1 1 0;
   min-height: var(--touch);
   padding: 0.5rem 0.85rem;
   background: var(--paper);
-  border: 1px solid var(--rule-strong);
-  margin: 0 -1px -1px 0;
+  border: 1.5px solid var(--rule-strong);
+  border-radius: var(--radius);
   cursor: pointer;
   user-select: none;
-}
-
-.segmented__option:first-child {
-  border-radius: var(--radius) 0 0 var(--radius);
-}
-
-.segmented__option:last-child {
-  border-radius: 0 var(--radius) var(--radius) 0;
 }
 
 .segmented__option input {
@@ -368,9 +364,10 @@
 }
 
 .segmented__mark {
-  width: 0.8rem;
-  height: 0.8rem;
+  width: 1rem;
+  height: 1rem;
   border: 1.5px solid var(--rule-strong);
+  border-radius: 50%;
   flex: none;
 }
 
@@ -378,14 +375,15 @@
   z-index: 1;
   background: var(--lime-soft);
   border-color: var(--green);
-  font-weight: 600;
-  color: var(--green);
+  box-shadow: inset 0 0 0 1px var(--green);
+  font-weight: 700;
+  color: var(--ink);
 }
 
 .segmented__option.is-checked .segmented__mark {
   background: var(--green);
   border-color: var(--green);
-  box-shadow: inset 0 0 0 2px var(--lime-soft);
+  box-shadow: inset 0 0 0 3px var(--lime-soft);
 }
 
 .segmented__option:has(input:focus-visible) {
@@ -403,9 +401,11 @@
   display: flex;
   flex-direction: column;
   line-height: 1.25;
+  white-space: nowrap; /* a label stays on one line, so a crowded row wraps whole options */
 }
 
 .segmented__hint {
+  white-space: normal;
   font-size: var(--text-meta);
   font-weight: 400;
   color: var(--ink-2);
@@ -432,30 +432,33 @@
   gap: 1rem;
   align-items: flex-start;
   justify-content: space-between;
-  padding: 0.9rem 1.1rem;
+  padding: 1rem 1.25rem;
   border: 1px solid var(--rule);
-  border-left-width: 4px;
-  border-radius: var(--radius);
+  border-radius: var(--radius-card);
   background: var(--paper);
 }
 
 .notice--success {
-  border-left-color: var(--green);
+  border-color: transparent;
   background: var(--lime-soft);
 }
 
-.notice--info {
-  border-left-color: var(--olive);
-}
-
 .notice--warn {
-  border-left-color: var(--warn);
+  border-color: transparent;
   background: var(--warn-soft);
 }
 
 .notice--error {
-  border-left-color: var(--danger);
+  border-color: transparent;
   background: var(--danger-soft);
+}
+
+.notice--warn .notice__label {
+  color: var(--warn);
+}
+
+.notice--error .notice__label {
+  color: var(--danger);
 }
 
 .notice__label {
@@ -485,23 +488,24 @@
   cursor: pointer;
 }
 
-/* Stats as a definition list in a ruled row (not tiles). Items wrap on narrow
-   screens; the negative margins + overflow clip the outer rules. */
+/* Stats as a definition list of rounded tiles. Items wrap on narrow screens. */
 .stat-list {
   display: flex;
   flex-wrap: wrap;
-  margin: 0;
-  overflow: hidden;
-  border-top: 1px solid var(--rule);
-  border-bottom: 1px solid var(--rule);
+  gap: 0.75rem;
+  margin-inline: 0;
+  margin-bottom: 0;
 }
 
 .stat-list__item {
   flex: 1 1 6.5rem;
-  margin: -1px 0 0 -1px;
   padding: 0.9rem 1rem;
-  border-top: 1px solid var(--rule);
-  border-left: 1px solid var(--rule);
+  background: var(--glass);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
 }
 
 @media (max-width: 40rem) {
@@ -524,8 +528,9 @@
 }
 
 .stat-list__value {
-  font-size: 1.75rem;
-  font-weight: 600;
+  font-size: 1.875rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
   line-height: 1.2;
 }
@@ -634,28 +639,34 @@
   background: var(--paper-shade);
 }
 
-/* Tabs as rectangular underlined links. */
+/* Tabs as pill links; the current one is filled. */
 .tabs {
   display: flex;
   flex-wrap: wrap;
-  gap: 0 1.5rem;
-  border-bottom: 1px solid var(--rule);
+  gap: 0.5rem;
 }
 
 .tabs__tab {
   display: inline-flex;
   align-items: center;
   min-height: var(--touch);
-  margin-bottom: -1px;
-  border-bottom: 3px solid transparent;
-  color: var(--ink-2);
+  padding: 0 1.1rem;
+  border: 1.5px solid var(--rule-strong);
+  border-radius: var(--radius-pill);
+  color: var(--ink);
   text-decoration: none;
   font-weight: 600;
 }
 
+.tabs__tab:hover {
+  background: var(--paper-shade);
+}
+
 .tabs__tab[aria-current='page'] {
-  color: var(--green);
-  border-bottom-color: var(--green);
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--on-ink);
+  font-weight: 700;
 }
 
 .tag--paused {
@@ -668,15 +679,17 @@
   width: min(36rem, calc(100vw - 2rem));
   max-height: calc(100dvh - 2rem);
   padding: 1.5rem;
-  border: 1px solid var(--rule-strong);
-  border-radius: var(--radius);
+  border: 0;
+  border-radius: var(--radius-card);
   background: var(--paper);
   color: var(--ink);
-  box-shadow: 0 12px 40px rgb(40 47 40 / 0.18);
+  box-shadow: 0 16px 48px rgb(14 33 27 / 0.22);
 }
 
 .dialog::backdrop {
-  background: rgb(40 47 40 / 0.45);
+  background: rgb(14 33 27 / 0.45);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
 }
 
 .dialog__title {
@@ -703,9 +716,7 @@
 }
 
 .source-line__label {
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  font-weight: 700;
   font-size: var(--text-meta);
   margin-right: 0.35rem;
 }
@@ -734,13 +745,13 @@
   margin: 0.75rem 0 0;
   padding: 1rem 1.25rem;
   border: 1px solid var(--rule);
-  border-left: 3px solid var(--lime);
+  border-radius: var(--radius);
   background: var(--bg);
   min-width: 0;
 }
 
 .choice-fields.has-error {
-  border-left-color: var(--danger);
+  border-color: var(--danger);
 }
 
 .choice-fields legend {
@@ -773,6 +784,7 @@
   margin-top: 0.75rem;
   padding: 1rem 1.25rem;
   border: 1px dashed var(--rule-strong);
+  border-radius: var(--radius);
   background: var(--bg);
 }
 
