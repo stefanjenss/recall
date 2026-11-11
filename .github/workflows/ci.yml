@@ -21,7 +21,8 @@ jobs:
       - run: npm run check
 
   e2e:
-    # Pinned: Playwright 1.56 cannot install its browser dependencies on ubuntu-latest (26.04).
+    # Pinned: Playwright 1.56 does not support ubuntu-latest (26.04). The 24.04 image already has Chromium's
+    # system libraries, so the browser is installed without --with-deps (no apt, which also keeps the job fast).
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -30,7 +31,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npx playwright install --with-deps chromium
+      - run: npx playwright install chromium
       - run: npm run test:e2e
         env:
           CI: 'true'
