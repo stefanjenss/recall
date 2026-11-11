@@ -88,6 +88,45 @@ tailscale serve status        # shows the address, e.g. https://thinkcentre.tail
 Tailscale Serve keeps the address private to your tailnet and handles HTTPS. Don't use `tailscale funnel`, which
 would put the server on the public internet.
 
+### Give Recall its own address
+
+If the ThinkCentre runs several apps, each can have its own name on your tailnet, so Recall lives at
+`https://recall.<your-tailnet>.ts.net` instead of at the machine's address. `compose.tailscale.yaml` does this for
+Docker: a small Tailscale container joins your tailnet as a machine named `recall` and serves the app over HTTPS, in
+place of `tailscale serve` on the host.
+
+1. In the Tailscale admin console, under **Settings → Keys**, generate an auth key (one-off, not reusable). Save it in a
+   file named `.env` next to `compose.tailscale.yaml`. Git ignores this file.
+
+   ```bash
+   echo 'TS_AUTHKEY=tskey-auth-…' > .env
+   ```
+
+2. Start Recall from the new file. It uses the same `recall-data` volume, so the server keeps its data and sync key.
+
+   ```bash
+   docker compose down
+   docker compose -f compose.tailscale.yaml up -d --build
+   ```
+
+   To make this the file that plain `docker compose` commands use, add `COMPOSE_FILE=compose.tailscale.yaml` to
+   `.env`.
+
+3. In the admin console, under **Machines**, find `recall` and choose **Disable key expiry**, so it doesn't drop off the
+   tailnet after six months. The auth key is used only once; you can delete the `TS_AUTHKEY` line afterward.
+
+Moving an existing setup changes Recall's address, and data in a browser belongs to the address it was saved under.
+The server has everything your devices have synced, so the move is safe if you do it in this order:
+
+1. On each device, open the old address and wait for sync to finish, so nothing is left only on that device.
+2. Open the new address. It starts empty. In Settings → Sync between devices, paste the sync key and choose **Connect
+   and download**. On the phone, add the new address to the Home Screen and remove the old icon.
+3. When every device uses the new address, turn off the old one with `sudo tailscale serve reset` on the ThinkCentre
+   (this clears everything Tailscale Serve publishes from the host), and remove the `ports:` lines from
+   `compose.tailscale.yaml`.
+
+Until step 3, both addresses work and reach the same server.
+
 ## Connect your devices
 
 Data in a browser belongs to the address it was saved under. If you've been using Recall at another address, such as
