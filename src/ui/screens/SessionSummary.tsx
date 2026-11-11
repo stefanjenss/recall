@@ -94,6 +94,8 @@ export function SessionSummary({ sessionId }: { sessionId: string }) {
   const skipped = session.results.filter((r) => r.outcome === 'skipped');
   // Rated Again, or missed in a quick check: both come back in 10 minutes.
   const again = reviews.filter((r) => (r.mode === 'recall' ? r.rating === 1 : !r.quickCheck.correct));
+  // A full-recall session can hold quick checks: cards the learner switched to their options.
+  const againLabel = quick ? 'missed' : again.some((r) => r.mode === 'quick-check') ? 'rated Again or missed' : 'rated Again';
   const remaining = session.queue.length - session.results.length;
   const ended = session.status === 'ended';
 
@@ -189,10 +191,19 @@ export function SessionSummary({ sessionId }: { sessionId: string }) {
             </tbody>
           </table>
         ) : null}
+        {!quick && quickChecks.length > 0 ? (
+          <p className="muted">
+            {quickChecks.length === 1
+              ? '1 card was switched to its options and saved as a quick check'
+              : `${quickChecks.length} cards were switched to their options and saved as quick checks`}
+            : {correctCount} correct, {quickChecks.length - correctCount} missed. Quick checks test recognition, not recall, and
+            never lengthen an interval.
+          </p>
+        ) : null}
 
         {again.length > 0 ? (
           <p>
-            {again.length} card{again.length === 1 ? '' : 's'} {quick ? 'missed' : 'rated Again'} will be due in{' '}
+            {again.length} card{again.length === 1 ? '' : 's'} {againLabel} will be due in{' '}
             {formatInterval((again[0]!.after.dueAt - again[0]!.committedAt) / DAY_MS)}
             {again.length === 1 ? ` (${formatDateTime(again[0]!.after.dueAt, tz)})` : ''}. They’ll appear in your next session,
             not this one.
