@@ -11,10 +11,16 @@ html {
 
 body {
   margin: 0;
-  background-color: var(--bg);
-  background-image: var(--wash);
-  background-repeat: no-repeat;
-  background-size: 100% 30rem;
+  /* iOS tints the status bar strip of a Home Screen app with the page's background color and fades it
+     into the content. That color is the top of the wash, so the strip and the page read as one surface;
+     the page's own base color is painted as a layer underneath the wash instead. */
+  background-color: var(--wash-top);
+  background-image: var(--wash), linear-gradient(var(--bg), var(--bg));
+  background-repeat: no-repeat, no-repeat, repeat;
+  background-size:
+    100% 30rem,
+    100% 30rem,
+    auto;
   color: var(--ink);
   font-family: var(--font-sans);
   font-size: var(--text-ui);

@@ -25,6 +25,13 @@
   pointer-events: none;
 }
 
+/* Installed to the Home Screen, the status bar's fade reaches a few points into the page: keep the pills clear of it. */
+@media (display-mode: standalone) {
+  .topbar {
+    padding-top: max(1rem, env(safe-area-inset-top));
+  }
+}
+
 .topbar__brand,
 .topbar__status > * {
   pointer-events: auto;
