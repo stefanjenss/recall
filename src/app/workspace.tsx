@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { Card, Preferences, Reflection, Review, Schedule, Session } from '../domain/types';
+import type { AiFeedbackMode, Assessment, Card, Preferences, Reflection, Review, Schedule, Session } from '../domain/types';
 import { createRepository, defaultPreferences, type Repository } from '../storage/repository';
 
 export type StorageStatus = 'persisted' | 'best-effort' | 'unsupported' | 'unknown';
@@ -15,6 +15,11 @@ export interface Workspace {
   schedules: Map<string, Schedule>;
   reviews: Review[];
   reflections: Reflection[];
+  /** AI assessments, oldest first. */
+  assessments: Assessment[];
+  /** How this device asks for AI feedback. */
+  aiMode: AiFeedbackMode;
+  setAiMode: (mode: AiFeedbackMode) => Promise<void>;
   activeSession: Session | null;
   preferences: Preferences;
   lastBackupAt: number | null;
@@ -57,6 +62,8 @@ export function WorkspaceProvider({ children, dbName }: { children: ReactNode; d
   const [schedules, setSchedules] = useState<Map<string, Schedule>>(new Map());
   const [reviews, setReviews] = useState<Review[]>([]);
   const [reflections, setReflections] = useState<Reflection[]>([]);
+  const [assessments, setAssessments] = useState<Assessment[]>([]);
+  const [aiMode, setAiModeState] = useState<AiFeedbackMode>('off');
   const [activeSession, setActiveSession] = useState<Session | null>(null);
   const [preferences, setPreferences] = useState<Preferences>(defaultPreferences);
   const [lastBackupAt, setLastBackupAt] = useState<number | null>(null);
@@ -75,6 +82,8 @@ export function WorkspaceProvider({ children, dbName }: { children: ReactNode; d
       setSchedules(new Map(ws.schedules.map((s) => [s.cardId, s])));
       setReviews(ws.reviews);
       setReflections(ws.reflections);
+      setAssessments(ws.assessments);
+      setAiModeState(ws.aiMode);
       setActiveSession(ws.activeSession);
       setPreferences(ws.preferences);
       setLastBackupAt(ws.lastBackupAt);
@@ -161,6 +170,16 @@ export function WorkspaceProvider({ children, dbName }: { children: ReactNode; d
     [preferences, repo, refresh],
   );
 
+  const setAiMode = useCallback(
+    async (mode: AiFeedbackMode) => {
+      setAiModeState(mode);
+      await repo.saveAiMode(mode);
+      // A device setting, not a synced change: other tabs reload, but nothing is uploaded.
+      await refresh('sync');
+    },
+    [repo, refresh],
+  );
+
   const value = useMemo<Workspace>(() => {
     const activeCards = cards.filter((c) => c.deletedAt === null);
     return {
@@ -173,6 +192,9 @@ export function WorkspaceProvider({ children, dbName }: { children: ReactNode; d
       schedules,
       reviews,
       reflections,
+      assessments,
+      aiMode,
+      setAiMode,
       activeSession,
       preferences,
       lastBackupAt,
@@ -193,6 +215,9 @@ export function WorkspaceProvider({ children, dbName }: { children: ReactNode; d
     schedules,
     reviews,
     reflections,
+    assessments,
+    aiMode,
+    setAiMode,
     activeSession,
     preferences,
     lastBackupAt,

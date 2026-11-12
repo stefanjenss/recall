@@ -169,6 +169,8 @@ The server reads these environment variables.
 | `RECALL_STATIC_DIR`      | `dist/` next to the server | The built app to serve. Set it to an empty string to serve only the sync API.    |
 | `RECALL_ALLOWED_ORIGINS` | (none)                     | Comma-separated origins allowed to call the API from another address. See below. |
 
+The optional AI feedback proxy has its own variables (`RECALL_AI_PROVIDER` and others); see [AI.md](AI.md).
+
 ### Commands
 
 ```bash

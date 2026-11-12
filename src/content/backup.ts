@@ -6,12 +6,15 @@
 // quick-check counter, review and session modes, and recall-sm2-v2. Version 1
 // backups are upgraded on restore (see src/domain/upgrade.ts).
 
+import { EVALUATION_LIMITS, OVERRIDE_REASON_LIMIT, validateRubricContent } from '../domain/grading';
 import { BACKUP_MAX_BYTES, LIMITS, MAX_DISTRACTORS } from '../domain/limits';
 import { QUICK_CHECK_LIMIT } from '../domain/scheduler';
 import { isValidTimeZone } from '../domain/time';
 import {
+  ASSESSMENT_LABELS,
   CARD_KINDS,
   CONFIDENCE_LEVELS,
+  CRITERION_RESULTS,
   PRACTICE_MODES,
   SCHEDULER_VERSION,
   SESSION_SIZES,
@@ -308,8 +311,84 @@ function checkReflection(v: V) {
   num(v, 'createdAt');
 }
 
-function checkWithId(v: V) {
+/** Criteria and misconceptions, with the rules the rubric editor applies. */
+function checkRubricContent(v: V) {
+  const { errors } = validateRubricContent(v.o);
+  for (const message of errors) v.e.add(`${v.path}: ${message}`);
+}
+
+function checkRubric(v: V) {
   str(v, 'id', { nonEmpty: true });
+  str(v, 'cardId', { nonEmpty: true });
+  if (v.o.id !== v.o.cardId) v.e.add(`${v.path}.id must equal its cardId (one rubric per card).`);
+  num(v, 'version', { int: true, min: 1 });
+  checkRubricContent(v);
+  bool(v, 'reviewed');
+  num(v, 'createdAt');
+  num(v, 'updatedAt');
+}
+
+function boundedList(v: V, key: string) {
+  const x = v.o[key];
+  if (
+    !Array.isArray(x) ||
+    x.length > EVALUATION_LIMITS.listItems ||
+    x.some((s) => typeof s !== 'string' || [...s].length > EVALUATION_LIMITS.listItem)
+  ) {
+    v.e.add(`${v.path}.${key} must list up to ${EVALUATION_LIMITS.listItems} short text entries.`);
+  }
+}
+
+function checkAssessment(v: V) {
+  str(v, 'id', { nonEmpty: true });
+  str(v, 'attemptId', { nonEmpty: true });
+  if (v.o.id !== v.o.attemptId) v.e.add(`${v.path}.id must equal its attemptId (one assessment per attempt).`);
+  str(v, 'cardId', { nonEmpty: true });
+  num(v, 'cardVersion', { int: true, min: 1 });
+  num(v, 'rubricVersion', { int: true, min: 1 });
+  const rubric = sub(v, 'rubric');
+  if (rubric) checkRubricContent(rubric);
+  oneOf(v, 'status', ['assessed', 'unable_to_assess']);
+  oneOf(v, 'label', ASSESSMENT_LABELS);
+  const assessed = v.o.status === 'assessed';
+  if (assessed === (v.o.label === 'unable')) v.e.add(`${v.path}.label doesn't match its status.`);
+  const criteria = v.o.criteria;
+  if (!Array.isArray(criteria)) v.e.add(`${v.path}.criteria must be a list.`);
+  else {
+    const known = new Set(
+      rubric && Array.isArray(rubric.o.criteria) ? rubric.o.criteria.map((c) => (isObj(c) ? c.id : undefined)) : [],
+    );
+    const seen = new Set<unknown>();
+    criteria.forEach((c, i) => {
+      if (!isObj(c)) return v.e.add(`${v.path}.criteria[${i}] must be an object.`);
+      const cv = { e: v.e, path: `${v.path}.criteria[${i}]`, o: c };
+      str(cv, 'id', { nonEmpty: true });
+      oneOf(cv, 'result', CRITERION_RESULTS);
+      str(cv, 'evidence', { max: EVALUATION_LIMITS.evidence });
+      if (!known.has(c.id) || seen.has(c.id)) v.e.add(`${cv.path}.id must name one rubric criterion, once.`);
+      seen.add(c.id);
+    });
+    if (criteria.length !== (assessed ? known.size : 0)) {
+      v.e.add(`${v.path}.criteria must ${assessed ? 'cover every rubric criterion' : 'be empty when unable to assess'}.`);
+    }
+  }
+  boundedList(v, 'incorrectClaims');
+  bool(v, 'contradictsReference');
+  boundedList(v, 'criticalMisconceptions');
+  boundedList(v, 'correctAspects');
+  boundedList(v, 'missingAspects');
+  str(v, 'explanation', { max: EVALUATION_LIMITS.explanation });
+  str(v, 'uncertaintyReason', { nullable: true, max: EVALUATION_LIMITS.uncertaintyReason });
+  if (assessed) num(v, 'score', { min: 0, max: 1 });
+  else oneOf(v, 'score', [null]);
+  oneOf(v, 'suggestedRating', assessed ? [1, 2, 3] : [null]);
+  str(v, 'provider', { nonEmpty: true, max: 100 });
+  str(v, 'model', { nonEmpty: true, max: 200 });
+  str(v, 'promptVersion', { nonEmpty: true, max: 100 });
+  num(v, 'createdAt');
+  oneOf(v, 'finalRating', [1, 2, 3, 4], { nullable: true });
+  str(v, 'overrideReason', { nullable: true, max: OVERRIDE_REASON_LIMIT });
+  num(v, 'finalizedAt', { nullable: true });
 }
 
 function checkPreferences(v: V) {
@@ -331,8 +410,8 @@ const CHECKERS: Record<CollectionName, (v: V) => void> = {
   reviews: checkReview,
   sessions: checkSession,
   reflections: checkReflection,
-  rubrics: checkWithId,
-  assessments: checkWithId,
+  rubrics: checkRubric,
+  assessments: checkAssessment,
 };
 
 export type RecordKind = CollectionName | 'preferences';

@@ -9,6 +9,7 @@ import { formatDateTime } from '../../domain/time';
 import { CONFIDENCE_LABELS, RATING_LABELS, type Review } from '../../domain/types';
 import { CardFields, formValuesFrom, type CardFormValues } from '../components/CardFields';
 import { ConfirmDialog, Notice, PageHeader } from '../components/common';
+import { RubricEditor } from '../components/RubricEditor';
 import { cardStatus } from './Collection';
 
 export function CardEditor({ cardId }: { cardId: string }) {
@@ -264,6 +265,8 @@ export function CardEditor({ cardId }: { cardId: string }) {
           )}
         </aside>
       </div>
+
+      <RubricEditor card={card} />
 
       <ConfirmDialog
         open={confirm === 'reset'}
