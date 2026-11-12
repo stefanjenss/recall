@@ -5,7 +5,7 @@
 //   node dist-server/recall-server.mjs backup [file]
 //                                                 write the server's data as a recall-backup file
 //
-// Settings come from environment variables; see docs/SYNC.md.
+// Settings come from environment variables; see docs/SYNC.md and docs/AI.md.
 
 import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -14,6 +14,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildBackup } from '../src/content/backup';
 import { MAX_BODY_BYTES } from '../src/sync/protocol';
+import { createAiService, destinationOf, readAiConfig, type AiConfig } from './ai';
 import { createHandler } from './handler';
 import { openServerStore } from './store';
 
@@ -26,6 +27,8 @@ interface Config {
   staticDir: string | null;
   allowedOrigins: string[];
   keyFromEnv: string | null;
+  /** null: AI feedback is off. */
+  ai: AiConfig | null;
 }
 
 function readConfig(env: NodeJS.ProcessEnv): Config {
@@ -50,6 +53,7 @@ function readConfig(env: NodeJS.ProcessEnv): Config {
       .map((o) => o.trim())
       .filter(Boolean),
     keyFromEnv: env.RECALL_SYNC_KEY?.trim() || null,
+    ai: readAiConfig(env),
   };
 }
 
@@ -92,6 +96,7 @@ function serve(config: Config) {
     staticDir: config.staticDir,
     allowedOrigins: config.allowedOrigins,
     backupDir: join(config.dataDir, 'backups'),
+    ai: config.ai ? createAiService(config.ai, { log }) : null,
     log,
   });
 
@@ -111,7 +116,7 @@ function serve(config: Config) {
       response.headers.forEach((value, name) => (out[name] = value));
       res.writeHead(response.status, out);
       res.end(method === 'HEAD' ? undefined : Buffer.from(await response.arrayBuffer()));
-      if (req.url?.startsWith('/api/sync/'))
+      if (req.url?.startsWith('/api/sync/') || req.url?.startsWith('/api/ai/'))
         log(`${method} ${req.url.split('?')[0]} ${response.status} ${Date.now() - started}ms`);
     } catch (err) {
       const status = (err as { status?: number }).status ?? 500;
@@ -127,6 +132,11 @@ function serve(config: Config) {
     log(`Data: ${config.dataDir}`);
     log(`Sync key: ${source}`);
     if (config.allowedOrigins.length > 0) log(`Allowed browser origins: ${config.allowedOrigins.join(', ')}`);
+    log(
+      config.ai
+        ? `AI feedback: ${config.ai.model} via ${destinationOf(config.ai)}, up to ${config.ai.dailyLimit} requests a day`
+        : 'AI feedback: off (set RECALL_AI_PROVIDER to turn it on; see docs/AI.md)',
+    );
   });
 
   const stop = () => {

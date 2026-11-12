@@ -13,12 +13,15 @@ import {
   RATING_DESCRIPTIONS,
   RATING_LABELS,
   RATINGS,
+  type Assessment,
   type Confidence,
   type Rating,
   type Review,
   type SkipReason,
 } from '../../domain/types';
+import { OVERRIDE_REASON_LIMIT } from '../../domain/grading';
 import type { CommitResult, PracticeState } from '../../storage/repository';
+import { AiFeedback } from '../components/AiFeedback';
 import { CharCount, ConfirmDialog, Markdown, Notice, OptionText, Segmented, SourceLine } from '../components/common';
 
 type Phase = 'loading' | 'none' | 'answering' | 'revealing' | 'revealed' | 'saving';
@@ -71,6 +74,9 @@ export function Practice() {
   const [inputError, setInputError] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState('');
   const [confirmEnd, setConfirmEnd] = useState(false);
+  /** An AI assessment of the current attempt, if there is one. It informs the learner; it never rates. */
+  const [assessment, setAssessment] = useState<Assessment | null>(null);
+  const [overrideReason, setOverrideReason] = useState('');
   const questionHeading = useRef<HTMLHeadingElement>(null);
   const answerHeading = useRef<HTMLHeadingElement>(null);
   const draft = useRef({ response: '', confidence: null as Confidence | null, dirty: false });
@@ -91,7 +97,13 @@ export function Practice() {
       return;
     }
     const a = next.session.attempt;
-    setState(next);
+    setState((prev) => {
+      if (prev?.session.attempt?.id !== a.id) {
+        setAssessment(null);
+        setOverrideReason('');
+      }
+      return next;
+    });
     setResponse(a.response);
     setConfidence(a.confidence);
     draft.current = { response: a.response, confidence: a.confidence, dirty: false };
@@ -245,7 +257,7 @@ export function Practice() {
         const result: CommitResult =
           rating === null
             ? await repo.commitQuickCheck(session.id, attempt.id, Date.now())
-            : await repo.commitReview(session.id, attempt.id, rating, Date.now());
+            : await repo.commitReview(session.id, attempt.id, rating, Date.now(), overrideReason);
         if (result.status === 'committed' || result.status === 'duplicate') {
           setAnnouncement(savedAnnouncement(result.review, result.status === 'duplicate'));
           void ws.refresh();
@@ -261,7 +273,7 @@ export function Practice() {
         setProblem({ kind: 'save-error', message: message(err), rating });
       }
     },
-    [session, attempt, phase, problem, repo, ws, apply],
+    [session, attempt, phase, problem, repo, ws, apply, overrideReason],
   );
 
   const skipCard = useCallback(
@@ -372,6 +384,7 @@ export function Practice() {
   const ratingBlocked = !!problem && problem.kind !== 'save-error';
   const isNewCard = state?.schedule?.reviewCount === 0;
   const canShowOptions = !quick && !!state?.schedule && canQuickCheck(card, state.schedule);
+  const suggested = assessment?.suggestedRating ?? null;
   const problemNotice = problem ? (
     <ProblemNotice problem={problem} onRetry={commit} onSkip={skipCard} onLoadUpdated={loadUpdated} onReload={load} />
   ) : null;
@@ -544,6 +557,15 @@ export function Practice() {
               <SourceLine source={card.source} />
             </section>
 
+            <AiFeedback
+              sessionId={session.id}
+              attempt={attempt}
+              card={card}
+              assessment={assessment}
+              onAssessment={setAssessment}
+              disabled={saving || ratingBlocked}
+            />
+
             {problemNotice}
 
             <section className="rating" aria-labelledby="rating-title">
@@ -569,11 +591,31 @@ export function Practice() {
                         {RATING_LABELS[r]} <kbd aria-hidden="true">{r}</kbd>
                       </span>
                       <span className="rating__desc">{RATING_DESCRIPTIONS[r]}</span>
+                      {suggested === r ? <span className="rating__suggested">AI suggestion</span> : null}
                       <span className="rating__interval">{p ? `Next in ${formatInterval(p.intervalDays)}` : ''}</span>
                     </button>
                   );
                 })}
               </div>
+              {suggested !== null ? (
+                <div className="field rating__reason">
+                  <label htmlFor="override-reason" className="field__label">
+                    Rating it differently from the suggestion? <span className="muted">(optional)</span>
+                  </label>
+                  <p id="override-reason-hint" className="field__hint">
+                    Note why before you choose. It’s saved with the AI feedback, and the rating you choose is the one that counts.
+                  </p>
+                  <input
+                    id="override-reason"
+                    type="text"
+                    value={overrideReason}
+                    maxLength={OVERRIDE_REASON_LIMIT}
+                    onChange={(e) => setOverrideReason(e.target.value)}
+                    aria-describedby="override-reason-hint"
+                    disabled={saving}
+                  />
+                </div>
+              ) : null}
               {saving ? (
                 <p className="muted" role="status">
                   Saving…

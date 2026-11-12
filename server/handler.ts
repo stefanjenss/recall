@@ -21,6 +21,8 @@ import {
   type PushResponse,
   type SyncErrorCode,
 } from '../src/sync/protocol';
+import { AI_API_PATH, validateGradeRequest, validateRubricDraftRequest, type AiErrorCode } from '../src/ai/protocol';
+import { AiError, disabledInfo, type AiService } from './ai';
 import type { ServerStore } from './store';
 
 export interface HandlerOptions {
@@ -33,12 +35,24 @@ export interface HandlerOptions {
   allowedOrigins?: string[];
   /** Where a copy of the data is saved before a reset. */
   backupDir: string;
+  /** AI feedback, or null when no model provider is configured. */
+  ai?: AiService | null;
   now?: () => number;
   log?: (line: string) => void;
 }
 
 const API = `/${SYNC_API_PATH}`;
 const ANY_SYNC_API = `/${SYNC_API_ROOT}`;
+const AI_API = `/${AI_API_PATH}`;
+
+const AI_STATUS: Record<AiErrorCode, number> = {
+  'ai-disabled': 503,
+  'ai-timeout': 504,
+  'ai-unavailable': 502,
+  'ai-malformed': 502,
+  'ai-refused': 422,
+  'ai-limit': 429,
+};
 
 const CONTENT_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -74,7 +88,7 @@ const CSP = [
 class HttpError extends Error {
   constructor(
     readonly status: number,
-    readonly code: SyncErrorCode,
+    readonly code: SyncErrorCode | AiErrorCode,
     message: string,
   ) {
     super(message);
@@ -96,6 +110,7 @@ export function createHandler(options: HandlerOptions): (request: Request) => Pr
   const keyDigest = digest(options.syncKey);
   const allowed = new Set((options.allowedOrigins ?? []).map((o) => o.replace(/\/+$/, '')));
   const root = staticDir ? resolve(staticDir) : null;
+  const ai = options.ai ?? null;
 
   function corsHeaders(request: Request): Record<string, string> {
     const origin = request.headers.get('origin');
@@ -127,7 +142,7 @@ export function createHandler(options: HandlerOptions): (request: Request) => Pr
   }
 
   function error(request: Request, err: HttpError): Response {
-    const body: ErrorBody = { error: err.code, message: err.message };
+    const body: Omit<ErrorBody, 'error'> & { error: SyncErrorCode | AiErrorCode } = { error: err.code, message: err.message };
     return json(request, err.status, body);
   }
 
@@ -232,6 +247,37 @@ export function createHandler(options: HandlerOptions): (request: Request) => Pr
     }
   }
 
+  /** AI feedback. Uses the sync key, but not a sync connection: nothing here reads or writes stored data. */
+  async function aiApi(request: Request, path: string): Promise<Response> {
+    if (request.method === 'OPTIONS') {
+      return new Response(null, { status: 204, headers: corsHeaders(request) });
+    }
+    authorize(request);
+    const route = `${request.method} ${path}`;
+    if (route === 'GET info') return json(request, 200, ai ? ai.info() : disabledInfo());
+    if (route !== 'POST grade' && route !== 'POST rubric') {
+      if (['info', 'grade', 'rubric'].includes(path)) {
+        throw new HttpError(405, 'method-not-allowed', `${request.method} isn't supported here.`);
+      }
+      throw new HttpError(404, 'not-found', 'No such AI endpoint.');
+    }
+    if (!ai) throw new HttpError(AI_STATUS['ai-disabled'], 'ai-disabled', 'AI feedback is not set up on this server.');
+    const body = await readJson(request);
+    try {
+      if (route === 'POST grade') {
+        const checked = validateGradeRequest(body);
+        if (!checked.ok) throw new HttpError(400, 'bad-request', checked.reason);
+        return json(request, 200, await ai.grade(checked.value));
+      }
+      const checked = validateRubricDraftRequest(body);
+      if (!checked.ok) throw new HttpError(400, 'bad-request', checked.reason);
+      return json(request, 200, await ai.draftRubric(checked.value));
+    } catch (err) {
+      if (err instanceof AiError) throw new HttpError(AI_STATUS[err.code], err.code, err.message);
+      throw err;
+    }
+  }
+
   async function serveStatic(request: Request, pathname: string): Promise<Response> {
     const notFound = () => new Response('Not found', { status: 404, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
     if (!root) return notFound();
@@ -279,6 +325,9 @@ export function createHandler(options: HandlerOptions): (request: Request) => Pr
       }
       if (url.pathname.startsWith(API)) {
         return await api(request, url.pathname.slice(API.length), url);
+      }
+      if (url.pathname.startsWith(AI_API)) {
+        return await aiApi(request, url.pathname.slice(AI_API.length));
       }
       if (url.pathname.startsWith(ANY_SYNC_API)) {
         // An app built for another protocol. Refuse before reading anything, so nothing is half-applied.

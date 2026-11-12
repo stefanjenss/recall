@@ -34,9 +34,17 @@ services:
       - tailscale
     volumes:
       - recall-data:/data
-    # To let the GitHub Pages copy sync too (docs/SYNC.md):
-    # environment:
-    #   RECALL_ALLOWED_ORIGINS: https://stefanjenss.github.io
+    environment:
+      # Optional AI feedback (docs/AI.md). Set these in .env; left unset, AI feedback is off.
+      RECALL_AI_PROVIDER: ${RECALL_AI_PROVIDER:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      RECALL_AI_MODEL: ${RECALL_AI_MODEL:-}
+      RECALL_AI_BASE_URL: ${RECALL_AI_BASE_URL:-}
+      RECALL_AI_API_KEY: ${RECALL_AI_API_KEY:-}
+      RECALL_AI_TIMEOUT_MS: ${RECALL_AI_TIMEOUT_MS:-}
+      RECALL_AI_DAILY_LIMIT: ${RECALL_AI_DAILY_LIMIT:-}
+      # To let the GitHub Pages copy sync too (docs/SYNC.md):
+      # RECALL_ALLOWED_ORIGINS: https://stefanjenss.github.io
 
 volumes:
   recall-data:

@@ -179,6 +179,7 @@ export interface Reflection {
 export type ReadingSize = 'standard' | 'large' | 'larger';
 export type SessionSize = 5 | 10 | 20;
 export const SESSION_SIZES: readonly SessionSize[] = [5, 10, 20];
+/** Reserved in synced preferences. AI feedback is a per-device setting instead: see AiFeedbackMode. */
 export type AiMode = 'disabled';
 
 export interface Preferences {
@@ -189,36 +190,96 @@ export interface Preferences {
   aiMode: AiMode;
 }
 
-// Reserved for P1 grading. Stores exist and are carried in backups so the
-// format does not need to change when grading arrives.
+// ---- AI grading (optional). See docs/PRD.md section 9 and src/domain/grading.ts. ----
+
 export interface RubricCriterion {
+  /** Stable within a rubric; kept when the criterion is edited. */
   id: string;
   description: string;
+  /** Positive whole number, 1–5. Coverage is the weighted share of criteria met. */
   weight: number;
   requiredConcepts: string[];
   acceptableAlternatives: string[];
 }
 
+/** One rubric per card: its ID is the card's ID. */
 export interface Rubric {
   id: string;
   cardId: string;
+  /** Incremented on every save, so an assessment names the rubric it used. */
   version: number;
   criteria: RubricCriterion[];
   criticalMisconceptions: string[];
+  /** The learner has read and saved it. Only reviewed rubrics are used for grading. */
   reviewed: boolean;
   createdAt: number;
   updatedAt: number;
 }
 
+export type CriterionResult = 'met' | 'partial' | 'missing';
+export const CRITERION_RESULTS: readonly CriterionResult[] = ['met', 'partial', 'missing'];
+
+export interface CriterionAssessment {
+  id: string;
+  result: CriterionResult;
+  /** A short quote from, or reference to, the learner's answer. */
+  evidence: string;
+}
+
+export type AssessmentStatus = 'assessed' | 'unable_to_assess';
+export type AssessmentLabel = 'correct' | 'partial' | 'incorrect' | 'unable';
+export const ASSESSMENT_LABELS: readonly AssessmentLabel[] = ['correct', 'partial', 'incorrect', 'unable'];
+
+/**
+ * An AI evaluation of one attempt. Its ID is the attempt ID (and so the review
+ * ID), so an attempt is graded at most once. It never changes a schedule: the
+ * learner's rating does, and is copied here as `finalRating` when it commits.
+ */
 export interface Assessment {
   id: string;
   attemptId: string;
   cardId: string;
   cardVersion: number;
   rubricVersion: number;
+  /** The rubric as it was graded against, so the result stays readable after edits. */
+  rubric: { criteria: RubricCriterion[]; criticalMisconceptions: string[] };
+  status: AssessmentStatus;
+  /** Exactly one entry per rubric criterion when assessed; empty otherwise. */
+  criteria: CriterionAssessment[];
+  incorrectClaims: string[];
+  /** An incorrect claim materially contradicts the reference answer. */
+  contradictsReference: boolean;
+  criticalMisconceptions: string[];
+  correctAspects: string[];
+  missingAspects: string[];
+  explanation: string;
+  uncertaintyReason: string | null;
+  /** Weighted coverage, 0–1, computed by the app. null when unable to assess. */
+  score: number | null;
+  label: AssessmentLabel;
+  /** Again, Hard, or Good. Never Easy; null when unable to assess. */
+  suggestedRating: 1 | 2 | 3 | null;
+  provider: string;
+  model: string;
+  promptVersion: string;
   createdAt: number;
-  [key: string]: unknown;
+  /** The learner's committed self-rating, which is what scheduling used. null until committed. */
+  finalRating: Rating | null;
+  /** Why the learner rated differently from the suggestion, if they said. */
+  overrideReason: string | null;
+  finalizedAt: number | null;
 }
+
+/** How this device asks for AI feedback. Kept per device; never synced or backed up. */
+export type AiFeedbackMode = 'off' | 'external' | 'server';
+export const AI_FEEDBACK_MODES: readonly AiFeedbackMode[] = ['off', 'external', 'server'];
+
+export const ASSESSMENT_LABEL_TEXT: Record<AssessmentLabel, string> = {
+  correct: 'Correct',
+  partial: 'Partially correct',
+  incorrect: 'Incorrect',
+  unable: 'Unable to assess',
+};
 
 export const KIND_LABELS: Record<CardKind, string> = {
   recall: 'Recall',

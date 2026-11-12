@@ -158,11 +158,15 @@ test('AC13: a future-version backup is rejected and nothing changes', async ({ p
   await expect(page.getByRole('heading', { name: /6\s*cards due/ })).toBeVisible();
 });
 
-test('AC18: with AI unavailable the app says so plainly and study works', async ({ page }) => {
+test('AC18: with AI off the app says so plainly and study works', async ({ page }) => {
   await page.goto('./#/settings');
-  await expect(page.getByText(/Not configured\./)).toBeVisible();
+  await expect(page.getByRole('radio', { name: /^Off/ })).toBeChecked();
+  await expect(page.getByText('Recall sends nothing to any model from this device.')).toBeVisible();
+  // Choosing the server route without a sync server doesn't pretend a grading service is active.
+  await page.getByRole('radio', { name: /Through my sync server/ }).check();
+  await expect(page.locator('#ai').getByText('Not available yet.')).toBeVisible();
   await page.goto('./#/method');
-  await expect(page.getByText(/doesn’t grade your answers with AI/)).toBeVisible();
+  await expect(page.getByText(/AI feedback is optional and off unless you turn it on/)).toBeVisible();
 });
 
 test('multiple-choice options can be written, imported, and edited; Today says which cards a quick check can take', async ({

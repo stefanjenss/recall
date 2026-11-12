@@ -198,8 +198,9 @@ export function Method() {
             supplement recall; they don’t replace it.
           </li>
           <li>
-            Recall doesn’t grade your answers with AI in this version. You compare your answer with the reference and rate it
-            yourself.
+            AI feedback is optional and off unless you turn it on in Settings. When it’s on, a model compares a typed answer with
+            the card’s rubric and suggests a rating. It can be wrong, and it never rates for you: the rating you choose is the one
+            that schedules the card.
           </li>
           <li>Your data lives in this browser only. Use backups to keep it safe or move it to another device.</li>
         </ul>

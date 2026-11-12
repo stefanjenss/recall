@@ -4,18 +4,18 @@
 
 Database `recall`, schema version **3** (`src/storage/db.ts`). All timestamps are UTC milliseconds; intervals are days.
 
-| Store           | Key                                      | Indexes                                | Holds                                                                                                                                                                                  |
-| --------------- | ---------------------------------------- | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `cards`         | `id`                                     | —                                      | `Card`: topic, question, answer, kind, source, `choices` (multiple-choice options or null), `contentVersion`, created/updated, `deletedAt` (soft delete)                               |
-| `schedules`     | `cardId`                                 | —                                      | `Schedule`: `dueAt`, `intervalDays`, `ease`, `reviewCount`, `lapseCount`, `paused`, `schedulerVersion`, `stateVersion`, `lastReviewedAt`, `quickChecksSinceRecall`                     |
-| `reviews`       | `id` (= attempt ID, the idempotency key) | `byCard`, `byCommittedAt`, `bySession` | `Review`: `mode`, response, confidence, rating (full recall) or `quickCheck` (options shown, pick, correct), before/after schedule snapshots, timestamps, content snapshot             |
-| `sessions`      | `id`                                     | `byStatus`                             | `Session`: `mode`, topics, size, queue (card IDs), index, status, current `attempt` (draft, confidence, reveal state; for a quick check, the shuffled `options` and `picked`), results |
-| `reflections`   | `id`                                     | `byCreatedAt`                          | `Reflection`: body, optional session ID                                                                                                                                                |
-| `rubrics`       | `id`                                     | `byCard`                               | Reserved for P1 grading (empty in P0)                                                                                                                                                  |
-| `assessments`   | `id`                                     | `byAttempt`                            | Reserved for P1 grading (empty in P0)                                                                                                                                                  |
-| `importBatches` | `id`                                     | —                                      | Idempotency keys for content imports and options imports. A runtime cache, excluded from backups                                                                                       |
-| `meta`          | `key`                                    | —                                      | `preferences`, `lastBackupAt`; while sync is connected, `syncConfig`, `syncState`, `syncClock` ([Sync](#sync))                                                                         |
-| `outbox`        | `id` (`<store>/<key>`)                   | —                                      | Records changed on this device that the sync server hasn't acknowledged yet. Written only while sync is connected                                                                      |
+| Store           | Key                                      | Indexes                                | Holds                                                                                                                                                                                                                                                                   |
+| --------------- | ---------------------------------------- | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cards`         | `id`                                     | —                                      | `Card`: topic, question, answer, kind, source, `choices` (multiple-choice options or null), `contentVersion`, created/updated, `deletedAt` (soft delete)                                                                                                                |
+| `schedules`     | `cardId`                                 | —                                      | `Schedule`: `dueAt`, `intervalDays`, `ease`, `reviewCount`, `lapseCount`, `paused`, `schedulerVersion`, `stateVersion`, `lastReviewedAt`, `quickChecksSinceRecall`                                                                                                      |
+| `reviews`       | `id` (= attempt ID, the idempotency key) | `byCard`, `byCommittedAt`, `bySession` | `Review`: `mode`, response, confidence, rating (full recall) or `quickCheck` (options shown, pick, correct), before/after schedule snapshots, timestamps, content snapshot                                                                                              |
+| `sessions`      | `id`                                     | `byStatus`                             | `Session`: `mode`, topics, size, queue (card IDs), index, status, current `attempt` (draft, confidence, reveal state; for a quick check, the shuffled `options` and `picked`), results                                                                                  |
+| `reflections`   | `id`                                     | `byCreatedAt`                          | `Reflection`: body, optional session ID                                                                                                                                                                                                                                 |
+| `rubrics`       | `id` (= card ID)                         | `byCard`                               | `Rubric`: one per card. `version`, 1–8 `criteria` (ID, description, weight 1–5, required concepts, acceptable alternatives), `criticalMisconceptions`, `reviewed`, created/updated                                                                                      |
+| `assessments`   | `id` (= attempt ID = review ID)          | `byAttempt`                            | `Assessment`: an AI evaluation of one attempt. Card and rubric versions, the rubric as graded, criterion results, wrong claims, `score`, `label`, `suggestedRating`, provider/model/prompt version, and the learner's `finalRating` and `overrideReason` once committed |
+| `importBatches` | `id`                                     | —                                      | Idempotency keys for content imports and options imports. A runtime cache, excluded from backups                                                                                                                                                                        |
+| `meta`          | `key`                                    | —                                      | `preferences`, `lastBackupAt`, `aiMode` (this device's AI feedback setting: `off`, `external`, or `server`); while sync is connected, `syncConfig`, `syncState`, `syncClock` ([Sync](#sync))                                                                            |
+| `outbox`        | `id` (`<store>/<key>`)                   | —                                      | Records changed on this device that the sync server hasn't acknowledged yet. Written only while sync is connected                                                                                                                                                       |
 
 Types are defined in `src/domain/types.ts`.
 
@@ -26,6 +26,13 @@ Types are defined in `src/domain/types.ts`.
   number of full-recall reviews plus missed quick checks committed since the card was created or last reset. A correct
   quick check doesn't count. With sync, one exception: if the same card is reviewed on two devices before they sync,
   both reviews are kept but the schedule comes from the later one, so the count is one lower than the history.
+- A rubric's ID is its card's ID. Saving a changed rubric increments `version`; it never changes the card's
+  `contentVersion` or schedule.
+- An assessment's ID is the attempt it evaluated, which is also the review's ID once the attempt is committed. It is
+  written only for the current, revealed attempt, and only if the card version and rubric version still match. Writing
+  one never changes a schedule. `score`, `label`, and `suggestedRating` (1–3, never 4) are computed by the app from the
+  validated criterion results; an `unable_to_assess` result has `score: null`, `label: "unable"`, no criteria, and no
+  suggestion. The review commit copies the learner's rating into `finalRating` in the same transaction.
 - `quickChecksSinceRecall` is at most 2. A full-recall review resets it to 0.
 - A review has `mode: 'recall'` with a rating 1–4 and `quickCheck: null`, or `mode: 'quick-check'` with
   `rating: null` and a `quickCheck` result. A review's mode is the attempt's, not the session's: a full-recall session
@@ -91,7 +98,12 @@ Produced by Settings → Download full backup (`src/content/backup.ts`).
 ```
 
 It contains no secrets, credentials, or runtime caches (`importBatches`, `lastBackupAt`, the sync settings, key, and
-outbox).
+outbox), and not the per-device AI feedback setting. `preferences.aiMode` is a reserved field that is always
+`"disabled"`.
+
+`rubrics` and `assessments` were reserved, always-empty lists until AI feedback was built (November 2026). They now
+hold records with the shapes above, validated on restore like everything else. The format version is still 2: a backup
+written before then restores unchanged, and an older copy of the app restores a newer backup without reading them.
 
 | Format version | Change                                                                                                   |
 | -------------- | -------------------------------------------------------------------------------------------------------- |
