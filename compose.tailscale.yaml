@@ -1,0 +1,43 @@
+# Recall with its own Tailscale address (https://recall.<your-tailnet>.ts.net), for a home server that runs
+# several apps. Use it instead of compose.yaml; see "Give Recall its own address" in docs/SYNC.md.
+#
+#   docker compose -f compose.tailscale.yaml up -d --build
+#
+# The tailscale container joins your tailnet as a machine named "recall" and serves the app over HTTPS.
+# The recall container shares its network, so the two reach each other on 127.0.0.1.
+services:
+  tailscale:
+    image: tailscale/tailscale:latest
+    hostname: recall
+    restart: unless-stopped
+    environment:
+      # Needed only for the first start; put it in .env (see docs/SYNC.md). The login is then kept in the volume.
+      TS_AUTHKEY: ${TS_AUTHKEY:-}
+      TS_AUTH_ONCE: 'true'
+      TS_HOSTNAME: recall
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_SERVE_CONFIG: /config/serve.json
+    volumes:
+      - tailscale-state:/var/lib/tailscale
+      - ./deploy/tailscale-serve.json:/config/serve.json:ro
+    # Keeps the old address (Tailscale Serve on the host) working while you move your devices.
+    # Remove it once they all use the new address.
+    ports:
+      - '127.0.0.1:8787:8787'
+
+  recall:
+    build: .
+    image: recall-sync
+    restart: unless-stopped
+    network_mode: service:tailscale
+    depends_on:
+      - tailscale
+    volumes:
+      - recall-data:/data
+    # To let the GitHub Pages copy sync too (docs/SYNC.md):
+    # environment:
+    #   RECALL_ALLOWED_ORIGINS: https://stefanjenss.github.io
+
+volumes:
+  recall-data:
+  tailscale-state:

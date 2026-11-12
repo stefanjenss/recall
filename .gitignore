@@ -8,3 +8,4 @@ playwright-report/
 *.tsbuildinfo
 .DS_Store
 .vite/
+.env
