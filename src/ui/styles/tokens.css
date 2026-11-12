@@ -21,9 +21,10 @@
   --on-ink-2: #c3d2ca;
 
   /* Depth: a soft wash behind the top of every page, a gradient on the hero, and frosted surfaces. */
+  --wash-top: #c9f0d9; /* also the theme-color in index.html and the manifest */
   --wash:
     radial-gradient(60rem 22rem at 100% 0, rgb(244 240 176 / 0.55), transparent 70%),
-    linear-gradient(180deg, #c9f0d9 0, #dcf3e2 12rem, var(--bg) 30rem);
+    linear-gradient(180deg, var(--wash-top) 0, #dcf3e2 12rem, var(--bg) 30rem);
   --hero:
     radial-gradient(28rem 18rem at 100% 0, rgb(123 227 168 / 0.28), transparent 70%),
     linear-gradient(140deg, #0e211b 0%, #123527 55%, #17503a 100%);
