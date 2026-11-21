@@ -20,10 +20,6 @@ services:
     volumes:
       - tailscale-state:/var/lib/tailscale
       - ./deploy/tailscale-serve.json:/config/serve.json:ro
-    # Keeps the old address (Tailscale Serve on the host) working while you move your devices.
-    # Remove it once they all use the new address.
-    ports:
-      - '127.0.0.1:8787:8787'
 
   recall:
     build: .
