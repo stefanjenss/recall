@@ -1,9 +1,10 @@
 import { useMemo } from 'react';
+import { summarizeAssessments, type AssessmentSummary } from '../../domain/grading';
 import { href } from '../../app/router';
 import { useWorkspace } from '../../app/workspace';
 import { LONG_INTERVAL_DAYS, percent, summarizeProgress } from '../../domain/stats';
 import { formatDateTime, formatDay } from '../../domain/time';
-import { CONFIDENCE_LABELS, CONFIDENCE_LEVELS, RATING_LABELS, RATINGS } from '../../domain/types';
+import { ASSESSMENT_LABEL_TEXT, CONFIDENCE_LABELS, CONFIDENCE_LEVELS, RATING_LABELS, RATINGS } from '../../domain/types';
 import { PageHeader, StatList } from '../components/common';
 
 const WINDOW = 14;
@@ -16,6 +17,7 @@ export function Progress() {
     [ws.activeCards, ws.schedules, ws.reviews, ws.now, tz],
   );
   const reflections = [...ws.reflections].sort((a, b) => b.createdAt - a.createdAt);
+  const ai = useMemo(() => summarizeAssessments(ws.assessments), [ws.assessments]);
 
   if (p.totalReviews === 0) {
     return (
@@ -219,8 +221,61 @@ export function Progress() {
         </section>
       </div>
 
+      <AiResults summary={ai} />
+
       <Reflections list={reflections} tz={tz} />
     </div>
+  );
+}
+
+/** Kept apart from the self-reported numbers above: these come from a model, not from the learner. */
+function AiResults({ summary: s }: { summary: AssessmentSummary }) {
+  if (s.total === 0) return null;
+  const rows = (['correct', 'partial', 'incorrect'] as const).map((label) => ({ label, n: s.labels[label] }));
+  return (
+    <section className="section" aria-labelledby="ai-results-title">
+      <h2 id="ai-results-title" className="section__title">
+        AI feedback <span className="muted">(experimental, from a model, all time)</span>
+      </h2>
+      <p className="lead-stat">
+        <strong>{s.scored}</strong> answer{s.scored === 1 ? '' : 's'} assessed
+        {s.unable > 0 ? (
+          <span className="muted">
+            {' '}
+            · {s.unable} more couldn’t be assessed and {s.unable === 1 ? 'isn’t' : 'aren’t'} counted below
+          </span>
+        ) : null}
+      </p>
+      {s.scored > 0 ? (
+        <table className="table bars">
+          <tbody>
+            {rows.map(({ label, n }) => (
+              <tr key={label}>
+                <th scope="row">{ASSESSMENT_LABEL_TEXT[label]}</th>
+                <td className="bars__cell">
+                  <span className="bars__bar" style={{ width: n > 0 ? `max(2px, ${(n / s.scored) * 100}%)` : 0 }} />
+                </td>
+                <td className="num">
+                  {n} <span className="muted">({percent({ count: n, total: s.scored })})</span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : null}
+      {s.agreement.total > 0 ? (
+        <p>
+          You chose the suggested rating in <strong>{s.agreement.count}</strong> of {s.agreement.total} rated answers
+          {s.ratedHigher + s.ratedLower > 0 ? ` (rated higher ${s.ratedHigher}, lower ${s.ratedLower})` : ''}. Your rating is the
+          one that scheduled each card.
+        </p>
+      ) : null}
+      <p className="muted small">
+        These labels are a model’s reading of typed answers against each card’s rubric. They cover only answers you asked it to
+        assess, they can be wrong, and they aren’t part of the self-ratings above or a measure of ability. If answers to a card
+        keep coming back incorrect or unassessable, the card or its rubric may need revising.
+      </p>
+    </section>
   );
 }
 

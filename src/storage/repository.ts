@@ -6,28 +6,31 @@ import type { IDBPTransaction } from 'idb';
 import { validateRecord, type WorkspaceData } from '../content/backup';
 import type { OptionsUpdate } from '../content/optionsImport';
 import { canQuickCheck, sameChoices, shuffledOptions } from '../domain/choices';
+import { OVERRIDE_REASON_LIMIT, sameRubricContent, validateRubricContent, type RubricContent } from '../domain/grading';
 import { newId } from '../domain/ids';
 import { duplicateKey, LIMITS, overLimitMessage, validateCardInput } from '../domain/limits';
 import { buildQueue, ineligibility } from '../domain/queue';
 import { applyQuickCheck, applyRating, initialSchedule, QUICK_CHECK_LIMIT, snapshotOf } from '../domain/scheduler';
 import { upgradeRecord } from '../domain/upgrade';
 import { browserTimeZone, isValidTimeZone } from '../domain/time';
-import type {
-  Assessment,
-  Attempt,
-  Card,
-  CardContent,
-  Confidence,
-  PracticeMode,
-  Preferences,
-  QuickCheckResult,
-  Rating,
-  Reflection,
-  Review,
-  Rubric,
-  Schedule,
-  Session,
-  SkipReason,
+import {
+  AI_FEEDBACK_MODES,
+  type AiFeedbackMode,
+  type Assessment,
+  type Attempt,
+  type Card,
+  type CardContent,
+  type Confidence,
+  type PracticeMode,
+  type Preferences,
+  type QuickCheckResult,
+  type Rating,
+  type Reflection,
+  type Review,
+  type Rubric,
+  type Schedule,
+  type Session,
+  type SkipReason,
 } from '../domain/types';
 import { compareHlc, hlcAt, isHlc, observeHlc, tickHlc } from '../sync/hlc';
 import type { SyncErrorKind } from '../sync/client';
@@ -51,9 +54,13 @@ export interface WorkspaceSnapshot {
   schedules: Schedule[];
   reviews: Review[];
   reflections: Reflection[];
+  /** AI assessments, oldest first. Empty unless AI feedback has been used. */
+  assessments: Assessment[];
   activeSession: Session | null;
   preferences: Preferences;
   lastBackupAt: number | null;
+  /** This device's AI feedback setting. */
+  aiMode: AiFeedbackMode;
 }
 
 /** How to reach the sync server. Kept in this browser only; never in backups. */
@@ -126,6 +133,11 @@ export type ShowOptionsResult =
   | { status: 'switched'; state: PracticeState }
   | { status: 'stale'; reason: 'session-changed' | 'reviewed-elsewhere' | 'edited'; state: PracticeState | null }
   | { status: 'ineligible'; reason: 'deleted' | 'paused'; state: PracticeState };
+
+/** Saving an AI assessment for the current attempt. Stale means the attempt, card, or rubric moved on. */
+export type SaveAssessmentResult =
+  | { status: 'saved' | 'duplicate'; assessment: Assessment }
+  | { status: 'stale'; reason: 'session-changed' | 'edited' | 'rubric-changed' };
 
 export type AddCardsResult = { status: 'added'; cardIds: string[] } | { status: 'already-imported'; cardIds: string[] };
 
@@ -252,7 +264,7 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
     // Review history is read in its own transaction so a large history never
     // holds up session writes (which touch cards, schedules, and sessions).
     const [core, reviews] = await Promise.all([
-      run(['cards', 'schedules', 'reflections', 'sessions', 'meta'], 'readonly', (tx) =>
+      run(['cards', 'schedules', 'reflections', 'sessions', 'assessments', 'meta'], 'readonly', (tx) =>
         Promise.all([
           tx.objectStore('cards').getAll(),
           tx.objectStore('schedules').getAll(),
@@ -260,11 +272,13 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
           tx.objectStore('sessions').index('byStatus').getAll('active'),
           tx.objectStore('meta').get('preferences'),
           tx.objectStore('meta').get('lastBackupAt'),
+          tx.objectStore('assessments').getAll(),
+          tx.objectStore('meta').get('aiMode'),
         ]),
       ),
       run(['reviews'], 'readonly', (tx) => tx.objectStore('reviews').index('byCommittedAt').getAll()),
     ]);
-    const [cards, schedules, reflections, active, prefs, lastBackup] = core;
+    const [cards, schedules, reflections, active, prefs, lastBackup, assessments, aiMode] = core;
     return {
       cards,
       schedules,
@@ -273,7 +287,20 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
       activeSession: active[0] ?? null,
       preferences: normalizePreferences(prefs?.value),
       lastBackupAt: typeof lastBackup?.value === 'number' ? lastBackup.value : null,
+      assessments: assessments.sort((a, b) => a.createdAt - b.createdAt),
+      aiMode: normalizeAiMode(aiMode?.value),
     };
+  }
+
+  function normalizeAiMode(value: unknown): AiFeedbackMode {
+    return (AI_FEEDBACK_MODES as readonly unknown[]).includes(value) ? (value as AiFeedbackMode) : 'off';
+  }
+
+  /** Per device: not synced, not in backups. */
+  async function saveAiMode(mode: AiFeedbackMode): Promise<void> {
+    await run(['meta'], 'readwrite', async (tx) => {
+      await tx.objectStore('meta').put({ key: 'aiMode', value: mode });
+    });
   }
 
   function normalizePreferences(value: unknown): Preferences {
@@ -943,11 +970,26 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
   }
 
   /** Commit a self-rating for a revealed full-recall attempt. */
-  function commitReview(sessionId: string, attemptId: string, rating: Rating, now: number): Promise<CommitResult> {
-    return commitAttempt(sessionId, attemptId, 'recall', now, (_attempt, _card, schedule) => ({
-      after: applyRating(schedule, rating, now),
-      outcome: { mode: 'recall', rating, quickCheck: null },
-    }));
+  function commitReview(
+    sessionId: string,
+    attemptId: string,
+    rating: Rating,
+    now: number,
+    /** Why the rating differs from an AI suggestion, if the learner said. Kept on the assessment, not the review. */
+    overrideReason: string | null = null,
+  ): Promise<CommitResult> {
+    const reason = overrideReason?.trim() ? [...overrideReason.trim()].slice(0, OVERRIDE_REASON_LIMIT).join('') : null;
+    return commitAttempt(
+      sessionId,
+      attemptId,
+      'recall',
+      now,
+      (_attempt, _card, schedule) => ({
+        after: applyRating(schedule, rating, now),
+        outcome: { mode: 'recall', rating, quickCheck: null },
+      }),
+      reason,
+    );
   }
 
   /** Commit a picked quick check. Whether the pick was correct is decided here, against the card. */
@@ -974,8 +1016,9 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
     mode: PracticeMode,
     now: number,
     settle: (attempt: Attempt, card: Card, schedule: Schedule) => { after: Schedule; outcome: ReviewOutcome },
+    overrideReason: string | null = null,
   ): Promise<CommitResult> {
-    return run(['cards', 'schedules', 'sessions', 'reviews', 'meta', 'outbox'], 'readwrite', async (tx) => {
+    return run(['cards', 'schedules', 'sessions', 'reviews', 'assessments', 'meta', 'outbox'], 'readwrite', async (tx) => {
       const sessionTx = tx as unknown as SessionTx;
       const existing = await tx.objectStore('reviews').get(attemptId);
       const session = await tx.objectStore('sessions').get(sessionId);
@@ -1046,16 +1089,26 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
       });
       session.index += 1;
       session.attempt = null;
+      // An AI assessment of this attempt records what the learner decided. The
+      // rating above is what scheduled the card; the suggestion stays as it was.
+      const changes: Array<[SyncStore, string]> = [
+        ['reviews', review.id],
+        ['schedules', card.id],
+      ];
+      const assessment = review.rating === null ? undefined : await tx.objectStore('assessments').get(review.id);
+      if (assessment && review.rating !== null) {
+        const differs = assessment.suggestedRating !== null && assessment.suggestedRating !== review.rating;
+        await tx.objectStore('assessments').put({
+          ...assessment,
+          finalRating: review.rating,
+          overrideReason: differs ? overrideReason : null,
+          finalizedAt: now,
+        });
+        changes.push(['assessments', assessment.id]);
+      }
       const next = await advance(sessionTx, session, now);
       await tx.objectStore('sessions').put(session);
-      await markChanged(
-        tx,
-        [
-          ['reviews', review.id],
-          ['schedules', card.id],
-        ],
-        now,
-      );
+      await markChanged(tx, changes, now);
       await markSession(sessionTx, session, now);
       return { status: 'committed', review, state: next };
     });
@@ -1143,6 +1196,94 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
         await markChanged(tx, [['sessions', session.id]], now);
       }
       return session;
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // Rubrics and AI assessments
+
+  async function getRubric(cardId: string): Promise<Rubric | null> {
+    const d = await db();
+    return (await d.get('rubrics', cardId)) ?? null;
+  }
+
+  /**
+   * Save a card's rubric as reviewed by the learner. Each change gets the next
+   * version. It isn't a content edit: the card's contentVersion and schedule
+   * are untouched.
+   */
+  async function saveRubric(cardId: string, content: RubricContent, now: number): Promise<Rubric> {
+    const { value, errors } = validateRubricContent(content);
+    if (!value) throw new ValidationError(errors.join(' '));
+    return run(['cards', 'rubrics', 'meta', 'outbox'], 'readwrite', async (tx) => {
+      const card = await tx.objectStore('cards').get(cardId);
+      if (!card || card.deletedAt !== null) throw new ValidationError('This card no longer exists.');
+      const existing = await tx.objectStore('rubrics').get(cardId);
+      if (existing && existing.reviewed && sameRubricContent(existing, value)) return existing;
+      const rubric: Rubric = {
+        id: cardId,
+        cardId,
+        version: (existing?.version ?? 0) + 1,
+        criteria: value.criteria,
+        criticalMisconceptions: value.criticalMisconceptions,
+        reviewed: true,
+        createdAt: existing?.createdAt ?? now,
+        updatedAt: now,
+      };
+      await tx.objectStore('rubrics').put(rubric);
+      await markChanged(tx, [['rubrics', cardId]], now);
+      return rubric;
+    });
+  }
+
+  /** The rubric and any stored assessment for the attempt on screen. */
+  async function getGrading(
+    cardId: string,
+    attemptId: string,
+  ): Promise<{ rubric: Rubric | null; assessment: Assessment | null }> {
+    return run(['rubrics', 'assessments'], 'readonly', async (tx) => {
+      const [rubric, assessment] = await Promise.all([
+        tx.objectStore('rubrics').get(cardId),
+        tx.objectStore('assessments').get(attemptId),
+      ]);
+      return { rubric: rubric ?? null, assessment: assessment ?? null };
+    });
+  }
+
+  /**
+   * Store an AI assessment for the current, revealed attempt. It is bound to
+   * the attempt, the card version, and the rubric version it was graded
+   * against; if any of them has moved on, nothing is stored. One assessment
+   * per attempt: a second save returns the first. Never touches a schedule.
+   */
+  async function saveAssessment(sessionId: string, assessment: Assessment, now: number): Promise<SaveAssessmentResult> {
+    const problems = validateRecord('assessments', assessment);
+    if (problems.length > 0) throw new ValidationError(problems.slice(0, 3).join(' '));
+    return run(['cards', 'sessions', 'rubrics', 'assessments', 'meta', 'outbox'], 'readwrite', async (tx) => {
+      const existing = await tx.objectStore('assessments').get(assessment.id);
+      if (existing) return { status: 'duplicate', assessment: existing };
+      const session = await tx.objectStore('sessions').get(sessionId);
+      const attempt = matchAttempt(session, assessment.attemptId);
+      if (!attempt || !attempt.revealed || attempt.options) return { status: 'stale', reason: 'session-changed' };
+      const [card, rubric] = await Promise.all([
+        tx.objectStore('cards').get(attempt.cardId),
+        tx.objectStore('rubrics').get(attempt.cardId),
+      ]);
+      if (
+        !card ||
+        card.deletedAt !== null ||
+        card.id !== assessment.cardId ||
+        card.contentVersion !== attempt.cardVersion ||
+        assessment.cardVersion !== attempt.cardVersion
+      ) {
+        return { status: 'stale', reason: 'edited' };
+      }
+      if (!rubric || !rubric.reviewed || rubric.version !== assessment.rubricVersion) {
+        return { status: 'stale', reason: 'rubric-changed' };
+      }
+      await tx.objectStore('assessments').add(assessment);
+      await markChanged(tx, [['assessments', assessment.id]], now);
+      return { status: 'saved', assessment };
     });
   }
 
@@ -1265,6 +1406,11 @@ export function createRepository(name: string = DB_NAME, options: RepositoryOpti
     refreshAttempt,
     endSession,
     addReflection,
+    saveAiMode,
+    getRubric,
+    saveRubric,
+    getGrading,
+    saveAssessment,
     exportWorkspace,
     replaceWorkspace,
     deleteAllData,

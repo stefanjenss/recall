@@ -5,7 +5,7 @@ repetition, interleaving, and reflection. It's a quiet study studio rather than 
 honest attempt from memory, a check, and a well-timed return.
 
 This is the standalone rebuild of the original Recall app described in [`docs/PRD.md`](docs/PRD.md). It runs entirely
-in the browser, with no account or AI service. Optionally, a small server you run yourself keeps your phone and laptop
+in the browser, with no account or AI service needed. Optionally, a small server you run yourself keeps your phone and laptop
 in sync.
 
 | Today                                        | Practice                                           | Answer                                         |
@@ -39,8 +39,8 @@ More screenshots, at desktop and phone widths, are in [`docs/screenshots/`](docs
 - **Settings:** reading size, default session size, timezone, sync between devices, full backups and restore, content
   export, and deleting all data.
 
-AI grading and in-app card generation are not part of this version (they're P1 in the PRD and need an approved
-inference provider). See [Roadmap](#roadmap).
+AI feedback on typed answers is optional and off by default. It runs through the sync server and hasn't been verified
+against a real model yet; see [`docs/AI.md`](docs/AI.md). In-app card generation isn't built.
 
 ## Run it locally
 
@@ -163,14 +163,15 @@ docs/         PRD, decisions, data/backup/sync formats, sync setup, acceptance c
 
 More detail: [`docs/DECISIONS.md`](docs/DECISIONS.md) (technical choices),
 [`docs/DATA.md`](docs/DATA.md) (storage, backup, import, and sync formats), [`docs/SYNC.md`](docs/SYNC.md) (sync
-setup), and [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md) (what has been verified, and how).
+setup), [`docs/AI.md`](docs/AI.md) (optional AI feedback), and [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md) (what has been verified, and how).
 
 ## Roadmap
 
 From the PRD, in priority order. Self-hosted sync (part of P2) is built; the rest isn't yet.
 
-- **P1 — AI grading and generation.** Rubrics, a provider-neutral evaluator interface, and structured feedback on
-  what's right, missing, or wrong. Grading needs a verified inference route and your sign-off on its cost and access. A
-  hosted provider would need a small backend or proxy, because API keys can't live in a static site.
+- **P1 — AI feedback.** Built, optional, and off by default: rubrics, and structured feedback on what's right, missing,
+  or wrong through a proxy on the sync server (Claude, a local model, or a hosted open-model provider). It hasn't been
+  verified against a real model yet; see [`docs/AI.md`](docs/AI.md). In-app card generation and bulk rubric drafting
+  aren't built.
 - **P2 — FSRS and more.** An FSRS scheduler (versioned, with a migration), burying related cards, reminders, and
   agent/MCP card saving. Sync is self-hosted and single-user; hosted, account-backed sync isn't planned.

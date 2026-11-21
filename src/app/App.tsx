@@ -11,6 +11,7 @@ import { Progress } from '../ui/screens/Progress';
 import { SessionSummary } from '../ui/screens/SessionSummary';
 import { Settings } from '../ui/screens/Settings';
 import { Today } from '../ui/screens/Today';
+import { AiProvider } from './ai';
 import { FlashProvider, useFlash } from './flash';
 import { href, useRoute, type Route } from './router';
 import { needsReconnect, SyncProvider, useSync } from './sync';
@@ -332,9 +333,11 @@ export function App() {
   return (
     <WorkspaceProvider>
       <SyncProvider>
-        <FlashProvider>
-          <Shell />
-        </FlashProvider>
+        <AiProvider>
+          <FlashProvider>
+            <Shell />
+          </FlashProvider>
+        </AiProvider>
       </SyncProvider>
     </WorkspaceProvider>
   );

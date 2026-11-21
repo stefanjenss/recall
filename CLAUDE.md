@@ -50,7 +50,7 @@ spec is `docs/PRD.md`; read the relevant section before changing behavior.
   pairs by hand against the table in `docs/DECISIONS.md`.
 - Phones navigate with the floating tab bar (four tabs plus More); it's hidden during practice. Desktop uses the sidebar.
 - Never show state by color alone; pair it with text or shape.
-- Keep copy honest: self-ratings are "self-reported", long intervals are "spacing, not mastery", and there's no AI in P0.
+- Keep copy honest: self-ratings are "self-reported", long intervals are "spacing, not mastery", and AI feedback is optional, experimental, and never rates a card.
 - American English.
 
 ## Verifying UI changes

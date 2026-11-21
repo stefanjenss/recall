@@ -1,11 +1,12 @@
 import { useMemo, useState } from 'react';
 import { useFlash } from '../../app/flash';
 import { navigate } from '../../app/router';
+import { useAi } from '../../app/ai';
 import { useSync } from '../../app/sync';
 import { useWorkspace } from '../../app/workspace';
 import { checkBackupSize, countWorkspace, parseBackupText, type WorkspaceCounts, type WorkspaceData } from '../../content/backup';
 import { browserTimeZone, formatDateTime, supportedTimeZones } from '../../domain/time';
-import { SESSION_SIZES, type ReadingSize, type SessionSize } from '../../domain/types';
+import { SESSION_SIZES, type AiFeedbackMode, type ReadingSize, type SessionSize } from '../../domain/types';
 import { useOffline } from '../../offline/register';
 import { downloadContentExport, downloadFullBackup } from '../backupActions';
 import { ConfirmDialog, Notice, PageHeader, Segmented } from '../components/common';
@@ -70,10 +71,10 @@ export function Settings() {
         sessions: [],
         reflections: ws.reflections,
         rubrics: [],
-        assessments: [],
+        assessments: ws.assessments,
         preferences: ws.preferences,
       }),
-    [ws.cards, ws.schedules, ws.reviews, ws.reflections, ws.preferences],
+    [ws.cards, ws.schedules, ws.reviews, ws.reflections, ws.assessments, ws.preferences],
   );
 
   async function chooseBackup(file: File | undefined) {
@@ -257,8 +258,8 @@ export function Settings() {
           <div className="export-option">
             <h3>Full backup</h3>
             <p>
-              Everything: cards, schedules, review history, sessions, reflections, and preferences. Use it to restore or move
-              devices.
+              Everything: cards, schedules, review history, sessions, reflections, rubrics, AI assessments, and preferences. Use
+              it to restore or move devices.
             </p>
             <button
               type="button"
@@ -319,23 +320,15 @@ export function Settings() {
 
       <SyncSettings />
 
-      <section className="section settings__group" aria-labelledby="ai-title">
-        <h2 id="ai-title" className="section__title">
-          AI feedback
-        </h2>
-        <p>
-          <strong>Not configured.</strong> This version doesn’t grade answers or generate cards with AI, and it never sends your
-          data anywhere. Practice is complete without it: compare your answer with the reference and rate it yourself. To create
-          cards with an assistant, use the copy-and-paste workflow in Add knowledge → Import.
-        </p>
-      </section>
+      <AiSettings />
 
       <section className="section settings__group settings__danger" aria-labelledby="delete-title">
         <h2 id="delete-title" className="section__title">
           Delete all data
         </h2>
         <p>
-          Permanently remove every card, review, session, reflection, and preference stored in this browser.
+          Permanently remove every card, review, session, reflection, rubric, AI assessment, and preference stored in this
+          browser.
           {syncHost ? ' This device also stops syncing. The copy on your sync server isn’t deleted.' : ''}
         </p>
         <button type="button" className="button button--danger" onClick={() => setDeleteOpen(true)}>
@@ -415,5 +408,87 @@ export function Settings() {
         </div>
       </ConfirmDialog>
     </div>
+  );
+}
+
+const AI_MODES: Array<{ value: AiFeedbackMode; label: string; hint: string }> = [
+  { value: 'off', label: 'Off', hint: 'Rate yourself' },
+  { value: 'external', label: 'Copy a prompt', hint: 'For an assistant you choose' },
+  { value: 'server', label: 'Through my sync server', hint: 'Its configured model' },
+];
+
+/** AI feedback is a setting of this device: it isn't synced, and it's off until chosen here. */
+function AiSettings() {
+  const ai = useAi();
+  const a = ai.availability;
+  return (
+    <section className="section settings__group" id="ai" aria-labelledby="ai-title">
+      <h2 id="ai-title" className="section__title">
+        AI feedback <span className="muted">(optional, experimental)</span>
+      </h2>
+      <div className="prose">
+        <p>
+          After you reveal an answer you typed, a model can compare it with the card’s reference answer and rubric and say what
+          was right, missing, or wrong. It suggests a rating; the rating you choose is the only thing that schedules a card.
+          Practice is complete without it.
+        </p>
+      </div>
+      <Segmented
+        legend="AI feedback on this device"
+        options={AI_MODES}
+        value={ai.mode}
+        onChange={(v) => v && void ai.setMode(v)}
+      />
+      {ai.mode === 'off' ? (
+        <p className="muted">
+          <strong>Off.</strong> Recall sends nothing to any model from this device.
+        </p>
+      ) : null}
+      {ai.mode === 'external' ? (
+        <p className="muted">
+          <strong>Copy a prompt.</strong> After a reveal, a button copies the question, reference answer, rubric, and your answer
+          for you to paste into an assistant. Recall sends nothing itself and doesn’t record or trust the reply.
+        </p>
+      ) : null}
+      {ai.mode === 'server' ? (
+        <div className="prose" role="status">
+          {a.state === 'ready' ? (
+            <p>
+              <strong>Ready.</strong> Your sync server uses <strong>{a.info.model}</strong> at {a.info.destination}. When you
+              choose Get AI feedback on a card, that card’s question, reference answer, and rubric, and your typed answer, go
+              through your server to that model. Nothing else is sent, and nothing is sent until you choose it. The provider’s key
+              stays on the server; this device never has it.
+            </p>
+          ) : a.state === 'no-sync' ? (
+            <p>
+              <strong>Not available yet.</strong> AI feedback runs through your own sync server, which holds the model provider’s
+              key. Connect this device under Sync between devices first.
+            </p>
+          ) : a.state === 'not-configured' ? (
+            <p>
+              <strong>Not set up on the server.</strong> Your sync server answered, but no model provider is configured on it. See{' '}
+              <code>docs/AI.md</code> in the Recall repository.
+            </p>
+          ) : a.state === 'unreachable' ? (
+            <p>
+              <strong>Not available right now.</strong> {a.message}
+            </p>
+          ) : (
+            <p>Checking your sync server…</p>
+          )}
+          {a.state === 'unreachable' || a.state === 'not-configured' ? (
+            <p>
+              <button type="button" className="button button--secondary" onClick={ai.recheck}>
+                Check again
+              </button>
+            </p>
+          ) : null}
+          <p className="muted">
+            Cards need a rubric for AI feedback; add one in a card’s editor. Results are a model’s reading of one answer, not a
+            measure of what you know.
+          </p>
+        </div>
+      ) : null}
+    </section>
   );
 }

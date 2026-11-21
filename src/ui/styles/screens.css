@@ -445,6 +445,132 @@
   font-variant-numeric: tabular-nums;
 }
 
+.rating__suggested {
+  padding: 0.1rem 0.5rem;
+  border: 1.5px solid var(--rate-color, var(--green));
+  border-radius: var(--radius-pill);
+  font-size: var(--text-meta);
+  font-weight: 700;
+}
+
+.rating__reason {
+  margin-top: 1rem;
+  max-width: var(--measure);
+}
+
+/* ---------- AI feedback (optional; informs the self-rating, never replaces it) ---------- */
+
+.ai-feedback {
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--rule);
+}
+
+.ai-feedback > * + *,
+.ai-feedback__result > * + * {
+  margin-top: 0.75rem;
+}
+
+.ai-feedback__tag {
+  margin-left: 0.35rem;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ink-2);
+}
+
+.ai-feedback__label {
+  font-size: var(--text-answer);
+  font-weight: 700;
+}
+
+.ai-feedback__label--correct {
+  color: var(--rate-good);
+}
+
+.ai-feedback__label--partial {
+  color: var(--rate-hard);
+}
+
+.ai-feedback__label--incorrect {
+  color: var(--rate-again);
+}
+
+.ai-feedback__score {
+  font-size: var(--text-ui);
+  font-weight: 400;
+  color: var(--ink-2);
+}
+
+.ai-feedback__explanation {
+  max-width: var(--measure);
+  font-size: var(--text-body);
+  line-height: var(--leading-study);
+}
+
+.ai-feedback__group h3 {
+  font-size: var(--text-ui);
+}
+
+.ai-feedback__group ul,
+.ai-feedback__criteria {
+  max-width: var(--measure);
+  margin-top: 0.25rem;
+  padding-left: 1.25rem;
+  font-size: var(--text-body);
+  line-height: 1.6;
+}
+
+.ai-feedback__criteria {
+  padding-left: 0;
+  list-style: none;
+}
+
+.ai-feedback__criteria li + li {
+  margin-top: 0.4rem;
+}
+
+.ai-feedback__criterion {
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.ai-feedback__evidence {
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+/* ---------- Rubric editor ---------- */
+
+.rubric {
+  margin-top: 2rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--rule);
+}
+
+.rubric > * + * {
+  margin-top: 1rem;
+}
+
+.rubric__criterion {
+  padding: 1rem;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--paper);
+}
+
+.rubric__criterion > * + * {
+  margin-top: 0.75rem;
+}
+
+.rubric__criterion legend {
+  padding: 0 0.35rem;
+  font-weight: 700;
+}
+
+.rubric__weight {
+  max-width: 14rem;
+}
+
 /* ---------- Quick check (multiple choice) ---------- */
 
 .choices__title {

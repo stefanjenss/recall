@@ -178,8 +178,8 @@ writes; and Practice refreshes the workspace only after its first card is on scr
 
 - **GitHub Pages**, deployed by `.github/workflows/deploy.yml` on every push to `main` after `npm run check` passes. The
   app is static and the data lives in each browser, so it needs no server of its own. The home server (the owner's
-  Ubuntu box with Docker and Tailscale) runs the optional sync server (see [Sync](#sync)) and is the planned place for
-  any P1 inference service.
+  Ubuntu box with Docker and Tailscale) runs the optional sync server (see [Sync](#sync)) and also runs the AI
+  feedback proxy (see [AI feedback](#ai-feedback-november-2026)).
 - **A hand-written service worker** instead of `vite-plugin-pwa`/Workbox. It's about 60 lines, adds no dependencies, and
   does one thing. A small Vite plugin in `vite.config.ts` writes `dist/sw.js` after each build, listing every output file
   (except legacy `.woff` fonts; every browser with service workers uses `.woff2`) and a version hash of their contents.
@@ -303,7 +303,62 @@ so the wash and hero rows were calculated by hand against the darkest or lightes
 | Warning text on warn-soft                   | 6.4       |
 | Control border on white                     | 3.6       |
 
+## AI feedback (November 2026)
+
+PRD section 9, P1. The owner authorized the route on 2026-11-12: a proxy on the self-hosted sync server that can reach
+Claude, a local model on the home server, or a hosted open-model provider, with Claude Haiku 5.5 as the default Claude
+model. Setup is in [AI.md](AI.md).
+
+- **A proxy on the sync server.** A static site can't hold a provider key, and the owner already runs this server on a
+  private tailnet. It gains three routes under `/api/ai/v1/`, guarded by the sync key. The provider key is read from
+  the server's environment and goes nowhere else. The server stores nothing about a request.
+- **Two adapters cover three routes.** `anthropic` uses the official SDK, bundled into the single server file, with a
+  JSON-schema output format. `openai-compatible` speaks Chat Completions, which Ollama and the hosted open-model
+  providers share, so a local model and a hosted one differ only in address and key. It asks for a strict schema and
+  falls back to JSON mode when a provider refuses one. Both feed the same validator.
+- **The model reports; the app decides.** The reply holds a result per rubric criterion with evidence, wrong claims,
+  whether one materially contradicts the reference, and which listed misconceptions the answer asserts. It has no
+  score, label, or rating. `src/domain/grading.ts` validates every ID, enum, and length, rejects the whole reply on any
+  failure, and computes coverage, label, and suggestion with the PRD's thresholds. The server validates before
+  answering and the browser validates again before displaying. Easy is never suggested.
+- **`contradictsReference` is an addition to the PRD's suggested contract.** The PRD makes "a material factual
+  contradiction" Incorrect, but a list of incorrect claims doesn't say which are material. One boolean does, and keeps
+  the schema simple enough for small local models. `uncertaintyReason` travels as an empty string rather than null for
+  the same reason, and is stored as null.
+- **Untrusted content.** The question, reference, rubric, and answer go in the user message as one JSON object, so an
+  answer can't close a delimiter and start giving orders. The instructions say that none of it is addressed to the
+  grader. The model has no tools. Whatever it replies must still pass validation, so the worst an injection can do is
+  get an answer graded wrongly, which the learner sees next to the reference and can override.
+- **Explicit, once.** Nothing is sent on reveal; the learner chooses Get AI feedback, under a line naming what is sent
+  and to which model. An assessment's ID is the attempt ID, inserted with `add`, so an attempt is graded at most once
+  on a device. The server also caches by request content and shares in-flight requests, so a double click or a retry
+  after a dropped connection doesn't pay twice. Failures aren't cached. A daily request cap bounds a runaway.
+- **Bound to what was graded.** A result is discarded unless it names the same attempt, card version, and rubric
+  version, and it is stored only if the attempt is still current and revealed and those versions still match. The
+  assessment keeps a copy of the rubric it used.
+- **The rating stays the learner's.** Storing an assessment touches no schedule. The suggested rating is marked on its
+  button in words; any button commits as before. The commit copies the chosen rating onto the assessment as
+  `finalRating`, with an optional reason when it differs, in the same transaction as the review.
+- **A rubric saved mid-attempt waits.** AI feedback uses a rubric only if it was saved before the attempt began, so a
+  rubric can't be written to fit an answer already given (PRD: "before the attempt begins").
+- **Rubric edits aren't content edits.** A rubric has its own version and doesn't bump the card's `contentVersion`, so
+  editing one never invalidates an attempt or a schedule. One rubric per card, keyed by the card ID, which makes
+  last-writer-wins sync per card. Saving is what marks a rubric reviewed; a model's draft is only form state until then.
+- **No schema, backup, or protocol version change.** The `rubrics` and `assessments` stores, their indexes, their
+  places in the backup format, and their sync stores were reserved from the start and were always empty, so there was
+  nothing to migrate. They gained strict validation. An older server accepts the new records (it only checked for an
+  ID), and an older app ignores them.
+- **The on/off switch is per device and not synced.** `Preferences.aiMode` is validated as `"disabled"` by every
+  existing server and backup reader, so widening it would have meant a sync protocol bump and a backup format bump for
+  a setting that is really about one device's connection. It lives in `meta` instead, like the sync settings.
+- **External mode** copies a prompt and records nothing, as the PRD requires for the manual path.
+- **Progress** shows AI results in their own section with sample sizes, excludes unable-to-assess from the label
+  shares, and reports how often the learner's rating matched the suggestion. Self-rating figures don't include them.
+- **Verification.** Unit, server, and end-to-end tests use a scripted model. `npm run test:ai-real` runs the curated
+  fixtures against a real provider; see [ACCEPTANCE.md](ACCEPTANCE.md) for whether that has been done.
+- **Not done:** bulk rubric drafting for existing cards, in-app card generation, per-criterion editing of a result,
+  and a persistent server-side request count (the daily cap resets on restart).
+
 ## Not done, on purpose
 
 - No dark mode. A dark variant should be designed, not inverted.
-- No AI. The Settings page says so plainly. See the README roadmap.
