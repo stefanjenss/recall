@@ -13,6 +13,11 @@ export default defineConfig({
   projects: [
     { name: 'desktop', use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 900 } } },
     { name: 'phone', use: { ...devices['Pixel 7'] } },
+    // iPad mini (6th generation and later) in portrait, with touch. tablet.spec.ts also turns it to landscape.
+    {
+      name: 'tablet',
+      use: { viewport: { width: 744, height: 1133 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true },
+    },
   ],
   webServer: {
     command: 'npm run build && npm run build:server && npx vite preview --port 4173 --strictPort',

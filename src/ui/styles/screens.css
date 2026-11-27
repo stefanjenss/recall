@@ -156,9 +156,11 @@
   text-decoration: none;
 }
 
-.topic-table th[scope='row'] a:hover .topic-name {
-  text-decoration: underline;
-  text-underline-offset: 0.18em;
+@media (hover: hover) {
+  .topic-table th[scope='row'] a:hover .topic-name {
+    text-decoration: underline;
+    text-underline-offset: 0.18em;
+  }
 }
 
 .topic-name {
@@ -383,10 +385,13 @@
   cursor: pointer;
 }
 
-.rating__button:hover:not(:disabled) {
-  border-color: var(--rate-color, var(--green));
-  box-shadow: inset 0 0 0 1px var(--rate-color, var(--green));
-  background: var(--bg);
+/* Touch screens keep :hover after a tap, which would mark a rating on the next card. */
+@media (hover: hover) {
+  .rating__button:hover:not(:disabled) {
+    border-color: var(--rate-color, var(--green));
+    box-shadow: inset 0 0 0 1px var(--rate-color, var(--green));
+    background: var(--bg);
+  }
 }
 
 .rating__button:disabled {
@@ -647,14 +652,16 @@ button.choice:disabled {
   text-decoration: none;
 }
 
-.card-row:hover {
-  background: var(--bg);
-}
+@media (hover: hover) {
+  .card-row:hover {
+    background: var(--bg);
+  }
 
-.card-row:hover .card-row__question {
-  text-decoration: underline;
-  text-decoration-thickness: 1px;
-  text-underline-offset: 0.18em;
+  .card-row:hover .card-row__question {
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 0.18em;
+  }
 }
 
 .card-row__question {
@@ -685,7 +692,8 @@ button.choice:disabled {
   gap: 2rem 3rem;
 }
 
-@media (min-width: 64rem) {
+/* Measured on the content column, not the window: in landscape on a tablet the sidebar takes 16rem of it. */
+@container main (min-width: 52rem) {
   .editor__layout {
     grid-template-columns: minmax(0, 1fr) 18rem;
     align-items: start;
@@ -759,7 +767,7 @@ button.choice:disabled {
   gap: 2rem 3rem;
 }
 
-@media (min-width: 64rem) {
+@container main (min-width: 52rem) {
   .add__write {
     grid-template-columns: minmax(0, 1fr) 18rem;
     align-items: start;

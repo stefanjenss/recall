@@ -303,6 +303,26 @@ so the wash and hero rows were calculated by hand against the darkest or lightes
 | Warning text on warn-soft                   | 6.4       |
 | Control border on white                     | 3.6       |
 
+## iPad mini (November 2026)
+
+The owner asked for Recall to work on an iPad mini. Its window is 744×1133 points in portrait (768×1024 on models
+before 2021), and the same turned sideways.
+
+- **Portrait is the phone layout.** At 744–768 points the app keeps the top pills and the floating tab bar, as the PRD
+  asks for tablets. Ratings already sit four across there.
+- **Landscape gets the sidebar, which takes 16rem.** That leaves the screens 700–800 points, yet the Add and Edit card
+  layouts went to two columns on window width (64rem), so the form was squeezed beside its side panel and the Kind menu
+  was cut off. Those layouts now measure the content column with a container query on `main` (52rem), and Topic and
+  Kind measure the form itself (30rem). The side panel moves below the form on an iPad mini in landscape and stays
+  beside it on a desktop window. Other breakpoints already fit, so they stay as media queries.
+- **Hover is for pointers that hover.** Touch screens keep `:hover` after a tap, so a rating, tab, or nav link could
+  look chosen until the next tap elsewhere. Hover effects sit inside `@media (hover: hover)`; an iPad with a trackpad
+  still gets them.
+- **Safe areas.** The sidebar and the main column pad by `env(safe-area-inset-*)` where it's larger than their usual
+  padding, which matters only for a Home Screen app whose status bar or home indicator overlaps the page.
+- **Testing.** A third Playwright project, **tablet**, runs every spec at 744×1133 with touch, and `tablet.spec.ts` turns
+  it to landscape at both sizes. This is Chromium emulation, not Safari on an iPad.
+
 ## Not done, on purpose
 
 - No dark mode. A dark variant should be designed, not inverted.

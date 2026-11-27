@@ -49,11 +49,15 @@ spec is `docs/PRD.md`; read the relevant section before changing behavior.
   (`--glass*`). Surfaces that hold study text stay opaque. axe can't measure text over gradients or blur, so check new
   pairs by hand against the table in `docs/DECISIONS.md`.
 - Phones navigate with the floating tab bar (four tabs plus More); it's hidden during practice. Desktop uses the sidebar.
+- iPad mini is a target: portrait (744–768px) gets the phone layout, landscape (1024–1133px) the sidebar, leaving
+  screens only 700–800px. A layout with a side column measures the content column (`@container main`), not the window.
+- Hover effects go inside `@media (hover: hover)`: touch screens keep `:hover` after a tap.
 - Never show state by color alone; pair it with text or shape.
 - Keep copy honest: self-ratings are "self-reported", long intervals are "spacing, not mastery", and there's no AI in P0.
 - American English.
 
 ## Verifying UI changes
 
-Run `npm run test:e2e`; it includes axe accessibility checks and a 320px reflow check on every screen. For visual
+Run `npm run test:e2e`; it includes axe accessibility checks and a 320px reflow check on every screen, on desktop,
+phone, and iPad mini (`tablet`) projects; `tablet.spec.ts` also checks landscape. For visual
 review, run `node scripts/screenshots.mjs` against a running preview and look at `docs/screenshots/`.

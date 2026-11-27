@@ -1,5 +1,5 @@
 // Capture the documentation screenshots from a running build.
-//   npm run build && npx vite preview --port 4173 &   (then)   node scripts/screenshots.mjs
+//   npm run build && npx vite preview --port 4173 &   (then)   node scripts/screenshots.mjs [desktop|tablet|mobile ...]
 // Uses only real interactions: starter cards, a short session, a reflection.
 import { mkdir } from 'node:fs/promises';
 import { chromium } from '@playwright/test';
@@ -31,14 +31,20 @@ const CORRECT_OPTIONS = {
 const browser = await chromium.launch();
 const viewports = {
   desktop: { viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 },
+  // iPad mini in landscape: the sidebar layout with the narrowest content column.
+  tablet: { viewport: { width: 1133, height: 744 }, deviceScaleFactor: 1, isMobile: true, hasTouch: true },
   mobile: { viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true },
 };
+const only = process.argv.slice(2);
 
 for (const [label, options] of Object.entries(viewports)) {
+  if (only.length && !only.includes(label)) continue;
   const context = await browser.newContext({ ...options, timezoneId: 'America/New_York' });
   const page = await context.newPage();
   // A full-page capture would paint the fixed tab bar across the middle of the page, so it sits at the end instead.
   const shot = async (name, fullPage = false) => {
+    // A full-page capture briefly drops touch emulation, so a pointer left over a row would paint its hover style.
+    await page.mouse.move(0, 0);
     const unfix = fullPage
       ? await page.addStyleTag({
           content: '.tabbar { position: static !important; margin-top: -4.5rem; margin-bottom: 0.6rem; }',

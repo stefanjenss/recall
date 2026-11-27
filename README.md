@@ -16,7 +16,7 @@ in sync.
 | -------------------------------------------------------- | ---------------------------------------------------------------------- |
 | ![Quick check](docs/screenshots/desktop-quick-check.png) | ![Quick-check result](docs/screenshots/desktop-quick-check-result.png) |
 
-More screenshots, at desktop and phone widths, are in [`docs/screenshots/`](docs/screenshots/).
+More screenshots, at desktop, iPad mini (landscape), and phone widths, are in [`docs/screenshots/`](docs/screenshots/).
 
 ## What it does
 
